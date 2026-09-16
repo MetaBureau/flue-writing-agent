@@ -1,7 +1,11 @@
-import { streamChat, type CompletionTarget } from "../complete.ts";
+import { type CompletionTarget, streamChat } from "../complete.ts";
 
 export type SourceNotes = { readonly text: string; readonly topic?: string };
-export type EditorialStyle = "economist" | "strunk-white" | "monocle" | "professional";
+export type EditorialStyle =
+  | "economist"
+  | "strunk-white"
+  | "monocle"
+  | "professional";
 export type DraftVoice = "conversational" | "professional" | "analytical";
 
 export const VOICE_FOR_STYLE: Record<EditorialStyle, DraftVoice> = {
@@ -54,15 +58,20 @@ export function noteParagraphs(notes: string): string[] {
 }
 
 const STOP_WORDS = new Set(
-  "the a an and or of to in on for with from that this these those was were been being have has had not but its their they them you your only into via by as at than then also when while".split(" "),
+  "the a an and or of to in on for with from that this these those was were been being have has had not but its their they them you your only into via by as at than then also when while"
+    .split(" "),
 );
 
 export function contentWords(text: string): string[] {
-  return text.toLowerCase().match(/[a-z0-9]+/g)?.filter((word) => word.length > 3 && !STOP_WORDS.has(word)) ?? [];
+  return text.toLowerCase().match(/[a-z0-9]+/g)?.filter((word) =>
+    word.length > 3 && !STOP_WORDS.has(word)
+  ) ?? [];
 }
 
 export function factualNotes(notes: string): string[] {
-  return noteParagraphs(notes).filter((paragraph) => countWords(paragraph) >= 15);
+  return noteParagraphs(notes).filter((paragraph) =>
+    countWords(paragraph) >= 15
+  );
 }
 
 export function groundedInNote(note: string, extra: string): boolean {
@@ -78,7 +87,11 @@ export function endsAsSentence(text: string): boolean {
 
 export function fitExtension(extra: string, asked: number): string {
   const ceiling = Math.max(asked + 80, 120);
-  const end = Math.max(extra.lastIndexOf("."), extra.lastIndexOf("!"), extra.lastIndexOf("?"));
+  const end = Math.max(
+    extra.lastIndexOf("."),
+    extra.lastIndexOf("!"),
+    extra.lastIndexOf("?"),
+  );
   if (end === -1) return "";
   const finished = extra.slice(0, end + 1).trim();
   if (countWords(finished) <= ceiling) return finished;
@@ -103,7 +116,12 @@ export function repeatsDraft(draft: string, extra: string): boolean {
   return extraWords.filter((word) => !known.has(word)).length < 4;
 }
 
-export function acceptExpansion(note: string, extra: string, asked: number, draft = ""): boolean {
+export function acceptExpansion(
+  note: string,
+  extra: string,
+  asked: number,
+  draft = "",
+): boolean {
   const added = countWords(extra);
   const ceiling = Math.max(asked + 80, 120);
   if (added < 20 || added > ceiling || !endsAsSentence(extra)) return false;
@@ -113,13 +131,18 @@ export function acceptExpansion(note: string, extra: string, asked: number, draf
 
 const FALLBACK_OUTLINE = (topic: string): Outline => ({
   title: topic.split(" ").slice(0, 4).join(" "),
-  sections: [topic.split(/[.\n]/).map((line) => line.trim()).find(Boolean) ?? "Notes"],
+  sections: [
+    topic.split(/[.\n]/).map((line) => line.trim()).find(Boolean) ?? "Notes",
+  ],
   wordCountTarget: wordCountFromTopic(topic),
 });
 
 function isOutline(value: unknown): value is Outline {
   if (typeof value !== "object" || value === null) return false;
-  if (!("title" in value) || !("sections" in value) || !("wordCountTarget" in value)) return false;
+  if (
+    !("title" in value) || !("sections" in value) ||
+    !("wordCountTarget" in value)
+  ) return false;
   const { title, sections, wordCountTarget } = value;
   return typeof title === "string" &&
     Array.isArray(sections) &&
@@ -144,7 +167,10 @@ function parseOutline(content: string, topic: string): Outline {
 export const OUTLINE_SYSTEM =
   "Return a JSON outline. Every section must name material already in the notes. Do not invent sections.";
 
-export function outlineUserPrompt(notes: string, words = wordCountFromTopic(notes)): string {
+export function outlineUserPrompt(
+  notes: string,
+  words = wordCountFromTopic(notes),
+): string {
   return [
     `Notes:\n${notes}`,
     `Outline a ${words}-word post that uses only these notes.`,
@@ -176,7 +202,12 @@ export function draftUserPrompt(
   ].join("\n\n");
 }
 
-export function extensionUserPrompt(draft: string, notes: string, target: number, current: number): string {
+export function extensionUserPrompt(
+  draft: string,
+  notes: string,
+  target: number,
+  current: number,
+): string {
   const ask = wordsToAsk(current, target);
   return [
     `The draft is ${current} words. Write ${ask} more words so the piece reaches at least ${target}.`,
@@ -188,7 +219,11 @@ export function extensionUserPrompt(draft: string, notes: string, target: number
   ].join("\n\n");
 }
 
-export function expansionUserPrompt(note: string, words: number, draft: string): string {
+export function expansionUserPrompt(
+  note: string,
+  words: number,
+  draft: string,
+): string {
   const ceiling = words + 40;
   return [
     `Write about ${words} words, and no more than ${ceiling}. End with a complete sentence.`,
@@ -221,7 +256,10 @@ export async function extendToTarget(
   let attempts = 0;
   while (words < target && attempts < MAX_EXTENSIONS) {
     attempts += 1;
-    const extra = await complete(extensionUserPrompt(text, notes, target, words), attempts);
+    const extra = await complete(
+      extensionUserPrompt(text, notes, target, words),
+      attempts,
+    );
     const merged = mergeExtension(text, extra);
     const next = countWords(merged);
     if (next <= words) break;
@@ -269,18 +307,37 @@ export const generateDrafts = async (
   }
 
   const styles: Array<{ name: DraftVoice; instruction: string }> = [
-    { name: "conversational", instruction: "Write in a friendly, conversational tone" },
-    { name: "professional", instruction: "Write in a professional, business-appropriate tone" },
-    { name: "analytical", instruction: "Write in an analytical, data-focused tone" },
+    {
+      name: "conversational",
+      instruction: "Write in a friendly, conversational tone",
+    },
+    {
+      name: "professional",
+      instruction: "Write in a professional, business-appropriate tone",
+    },
+    {
+      name: "analytical",
+      instruction: "Write in an analytical, data-focused tone",
+    },
   ];
 
   const drafts: Draft[] = [];
   for (const { name, instruction } of styles) {
     const content = await streamChat(model, [
       { role: "system", content: DRAFT_SYSTEM },
-      { role: "user", content: draftUserPrompt(instruction, outline, notes.text) },
-    ], { temperature: 0.3, label: `draft:${name}`, maxTokens: DRAFT_MAX_TOKENS });
-    drafts.push({ style: name, content: content || "Draft content placeholder" });
+      {
+        role: "user",
+        content: draftUserPrompt(instruction, outline, notes.text),
+      },
+    ], {
+      temperature: 0.3,
+      label: `draft:${name}`,
+      maxTokens: DRAFT_MAX_TOKENS,
+    });
+    drafts.push({
+      style: name,
+      content: content || "Draft content placeholder",
+    });
   }
 
   return drafts;
@@ -322,7 +379,9 @@ export async function extendDraft(
       const fitted = fitExtension(extra, each);
       if (!acceptExpansion(note, fitted, each, text)) {
         console.log(
-          `[${label}:expand:${round}:${index + 1}] rejected raw=${countWords(extra)} fitted=${countWords(fitted)}`,
+          `[${label}:expand:${round}:${index + 1}] rejected raw=${
+            countWords(extra)
+          } fitted=${countWords(fitted)}`,
         );
         continue;
       }
@@ -331,7 +390,11 @@ export async function extendDraft(
       if (next <= words) continue;
       text = merged;
       words = next;
-      console.log(`[${label}:expand:${round}:${index + 1}] ${words} words, target ${target}`);
+      console.log(
+        `[${label}:expand:${round}:${
+          index + 1
+        }] ${words} words, target ${target}`,
+      );
     }
   }
   return text;

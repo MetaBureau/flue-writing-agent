@@ -1,9 +1,14 @@
 import { streamChat } from "../complete.ts";
 import { countWords, endsAsSentence } from "../agents/write.ts";
 import { ResolvedProvider } from "../providers.ts";
-import { isStyleName, styleSystemPrompt, styles, type StyleRules } from "./styles.ts";
+import {
+  isStyleName,
+  type StyleRules,
+  styles,
+  styleSystemPrompt,
+} from "./styles.ts";
 
-export { styleSystemPrompt, styles, type StyleRules };
+export { type StyleRules, styles, styleSystemPrompt };
 
 const STYLE_STUB_WORDS = 80;
 
@@ -38,7 +43,9 @@ export const applyEditorialStyle = async (
   model: ResolvedProvider,
   wordCountTarget: number,
 ): Promise<string> => {
-  const style = isStyleName(styleName) ? styles[styleName] : styles.professional;
+  const style = isStyleName(styleName)
+    ? styles[styleName]
+    : styles.professional;
   let result = text;
 
   if (model.apiKey) {
@@ -48,9 +55,15 @@ export const applyEditorialStyle = async (
     ], { temperature: 0.2, label: `style:${styleName}`, maxTokens: 4096 });
     const kept = keepIfNotShortened(text, edited);
     if (kept === text && edited.trim()) {
-      console.log(`[style:${styleName}] discarded rewrite (${countWords(edited)} words)`);
+      console.log(
+        `[style:${styleName}] discarded rewrite (${countWords(edited)} words)`,
+      );
     } else if (countWords(kept) < countWords(text)) {
-      console.log(`[style:${styleName}] kept the cut (${countWords(text)} -> ${countWords(kept)})`);
+      console.log(
+        `[style:${styleName}] kept the cut (${countWords(text)} -> ${
+          countWords(kept)
+        })`,
+      );
     }
     result = kept;
   }

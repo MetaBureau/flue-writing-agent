@@ -1,7 +1,7 @@
 import { define } from "../define.ts";
 import WriteForm from "../islands/WriteForm.tsx";
 import { STYLE_NAMES } from "../src/skills/styles.ts";
-import { PROVIDERS, providerKeyProblem, reloadEnv } from "../src/providers.ts";
+import { providerKeyProblem, PROVIDERS, reloadEnv } from "../src/providers.ts";
 
 export default define.page(async function Home() {
   await reloadEnv();
@@ -11,7 +11,9 @@ export default define.page(async function Home() {
         styles={[...STYLE_NAMES]}
         providers={Object.keys(PROVIDERS)}
         models={Object.fromEntries(
-          Object.entries(PROVIDERS).map(([name, config]) => [name, [...config.models]]),
+          Object.entries(PROVIDERS).map((
+            [name, config],
+          ) => [name, [...config.models]]),
         )}
         providerProblems={{
           haimaker: providerKeyProblem("haimaker") ?? "",

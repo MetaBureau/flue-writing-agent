@@ -1,5 +1,11 @@
 /// <reference lib="deno.ns" />
-import { extendDraft, generateOutline, generateDrafts, pickDraft, countWords } from "./agents/write.ts";
+import {
+  countWords,
+  extendDraft,
+  generateDrafts,
+  generateOutline,
+  pickDraft,
+} from "./agents/write.ts";
 import { applyEditorialStyle } from "./skills/editorial.ts";
 import { gatherResearch } from "./research.ts";
 import { PROVIDERS, resolveProvider } from "./providers.ts";
@@ -48,8 +54,12 @@ function parseArgs(): Args {
     console.log("");
     console.log("Options:");
     console.log("  --provider <name>   Provider: haimaker, mercury");
-    console.log("  --model <id>        Model id from the provider's list (e.g. openai/gpt-4.1)");
-    console.log("  --style <name>      Style: economist, strunk-white, monocle, professional");
+    console.log(
+      "  --model <id>        Model id from the provider's list (e.g. openai/gpt-4.1)",
+    );
+    console.log(
+      "  --style <name>      Style: economist, strunk-white, monocle, professional",
+    );
     console.log("  --format <fmt>      Output: markdown, json, plain");
     console.log("  --verbose           Show detailed progress");
     console.log("  --dry-run           Show config without running");
@@ -60,7 +70,9 @@ function parseArgs(): Args {
       console.log(`  ${cfg.apiKeyEnvVar}=...`);
       console.log(`  ${cfg.modelEnvVar}=${cfg.defaultModelId}`);
       console.log(`  ${cfg.urlEnvVar}=${cfg.baseUrl}`);
-      console.log(`  models: ${cfg.models.map((model) => model.id).join(", ")}`);
+      console.log(
+        `  models: ${cfg.models.map((model) => model.id).join(", ")}`,
+      );
       console.log("");
     }
     Deno.exit(1);
@@ -96,12 +108,16 @@ function log(args: Args, phase: string, detail: string) {
 
 function formatOutput(args: Args, content: string) {
   if (args.outputFormat === "json") {
-    return JSON.stringify({
-      topic: args.topic,
-      style: args.style,
-      content,
-      generatedAt: new Date().toISOString(),
-    }, null, 2);
+    return JSON.stringify(
+      {
+        topic: args.topic,
+        style: args.style,
+        content,
+        generatedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    );
   } else if (args.outputFormat === "markdown") {
     return `# ${args.topic}\n\n## Style: ${args.style}\n\n---\n\n${content}`;
   } else {
@@ -125,18 +141,28 @@ async function runWritingWorkflow(args: Args) {
     "mercury";
 
   const fastProvider = resolveProvider(providerName, "fast", args.model);
-  const reasoningProvider = resolveProvider(providerName, "reasoning", args.model);
+  const reasoningProvider = resolveProvider(
+    providerName,
+    "reasoning",
+    args.model,
+  );
 
   if (args.dryRun) {
     console.log("=== Configuration (dry run) ===");
     console.log(`Topic: ${args.topic}`);
     console.log(`Provider: ${providerName}`);
     console.log(`Style: ${args.style}`);
-    console.log(`Fast Model: ${fastProvider.modelId} (${fastProvider.baseUrl})`);
-    console.log(`Reasoning Model: ${reasoningProvider.modelId} (${reasoningProvider.baseUrl})`);
+    console.log(
+      `Fast Model: ${fastProvider.modelId} (${fastProvider.baseUrl})`,
+    );
+    console.log(
+      `Reasoning Model: ${reasoningProvider.modelId} (${reasoningProvider.baseUrl})`,
+    );
     console.log(`Output Format: ${args.outputFormat}`);
     console.log(`Verbose: ${args.verbose}`);
-    console.log(`Research: ${Deno.env.get("TAVILY_API_KEY") ? "api key" : "keyless"}`);
+    console.log(
+      `Research: ${Deno.env.get("TAVILY_API_KEY") ? "api key" : "keyless"}`,
+    );
     return;
   }
 
@@ -156,7 +182,11 @@ async function runWritingWorkflow(args: Args) {
 
   log(args, "selection", "Choosing draft by style voice");
   const selected = pickDraft(drafts, args.style);
-  console.log(`[draft:${selected.style}] ${countWords(selected.content)} words before style`);
+  console.log(
+    `[draft:${selected.style}] ${
+      countWords(selected.content)
+    } words before style`,
+  );
 
   log(args, "style", `Applying ${args.style} editorial rules`);
   const styled = await applyEditorialStyle(

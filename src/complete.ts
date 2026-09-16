@@ -24,8 +24,12 @@ function textFromChoice(choice: unknown): string {
   if (!isRecord(choice)) return "";
   const delta = choice.delta;
   const message = choice.message;
-  if (isRecord(delta) && typeof delta.content === "string") return delta.content;
-  if (isRecord(message) && typeof message.content === "string") return message.content;
+  if (isRecord(delta) && typeof delta.content === "string") {
+    return delta.content;
+  }
+  if (isRecord(message) && typeof message.content === "string") {
+    return message.content;
+  }
   return "";
 }
 
@@ -39,7 +43,9 @@ function contentFromPayload(payload: unknown): string {
 function finishReason(payload: unknown): string | undefined {
   if (!isRecord(payload) || !Array.isArray(payload.choices)) return undefined;
   const choice = payload.choices.at(-1);
-  if (!isRecord(choice) || typeof choice.finish_reason !== "string") return undefined;
+  if (!isRecord(choice) || typeof choice.finish_reason !== "string") {
+    return undefined;
+  }
   return choice.finish_reason;
 }
 
@@ -75,7 +81,9 @@ export async function streamChat(
       temperature: options.temperature,
       stream: true,
       messages,
-      ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
+      ...(options.maxTokens === undefined
+        ? {}
+        : { max_tokens: options.maxTokens }),
     }),
     signal: AbortSignal.timeout(150_000),
   });
@@ -92,7 +100,9 @@ export async function streamChat(
       ? " Cloudflare origin timeout. Streaming should have prevented this; the upstream sent no bytes in time."
       : "";
     throw new Error(
-      `${options.label} failed: HTTP ${response.status}.${limitNote}${gatewayNote} ${snippet(body)}`,
+      `${options.label} failed: HTTP ${response.status}.${limitNote}${gatewayNote} ${
+        snippet(body)
+      }`,
     );
   }
 
@@ -101,7 +111,11 @@ export async function streamChat(
     const payload: unknown = await response.json();
     const content = contentFromPayload(payload);
     const reason = finishReason(payload);
-    console.log(`[${options.label}] ${model.modelId} ${elapsed()}ms${reason ? ` finish=${reason}` : ""}`);
+    console.log(
+      `[${options.label}] ${model.modelId} ${elapsed()}ms${
+        reason ? ` finish=${reason}` : ""
+      }`,
+    );
     return content;
   }
 
@@ -136,6 +150,10 @@ export async function streamChat(
     }
   }
 
-  console.log(`[${options.label}] ${model.modelId} ${elapsed()}ms${reason ? ` finish=${reason}` : ""}`);
+  console.log(
+    `[${options.label}] ${model.modelId} ${elapsed()}ms${
+      reason ? ` finish=${reason}` : ""
+    }`,
+  );
   return content;
 }

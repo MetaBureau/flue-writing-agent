@@ -15,10 +15,14 @@ const content = await streamChat({
 }, [
   {
     role: "system",
-    content: "You are an expert technical writer. Write in the Economist style: direct, active voice, omits needless words.",
+    content:
+      "You are an expert technical writer. Write in the Economist style: direct, active voice, omits needless words.",
   },
   { role: "user", content: `Write a blog post about: ${topic}` },
 ], { temperature: 0.7, label: "write" });
 
-await Deno.writeTextFile("Mercury2.5_economist.md", `# ${topic}\n\n---\n\n${content}`);
+await Deno.writeTextFile(
+  "Mercury2.5_economist.md",
+  `# ${topic}\n\n---\n\n${content}`,
+);
 console.log(content);

@@ -1,8 +1,13 @@
 /// <reference lib="deno.ns" />
-import { assertEquals, assertStringIncludes, assertFalse } from "jsr:@std/assert@^1.0.19";
+import {
+  assertEquals,
+  assertFalse,
+  assertStringIncludes,
+} from "jsr:@std/assert@^1.0.19";
 import {
   acceptExpansion,
   countWords as countDraftWords,
+  type Draft,
   draftUserPrompt,
   expansionTokenBudget,
   extendToTarget,
@@ -15,11 +20,19 @@ import {
   repeatsDraft,
   wordCountFromTopic,
   wordsToAsk,
-  type Draft,
 } from "../src/agents/write.ts";
-import { keepIfNotShortened, styleUserPrompt } from "../src/skills/editorial.ts";
+import {
+  keepIfNotShortened,
+  styleUserPrompt,
+} from "../src/skills/editorial.ts";
 import { countWords, topicSlug } from "../src/main.ts";
-import { claimText, hitsFromPayload, relevantToQuery, searchQuery, sourceNotes } from "../src/research.ts";
+import {
+  claimText,
+  hitsFromPayload,
+  relevantToQuery,
+  searchQuery,
+  sourceNotes,
+} from "../src/research.ts";
 
 Deno.test("pickDraft selects analytical draft for economist style", () => {
   const drafts: Draft[] = [
@@ -91,16 +104,24 @@ Deno.test("wordsToAsk asks for more than the shortfall", () => {
 
 Deno.test("mergeExtension appends and replaces a full rewrite", () => {
   assertEquals(mergeExtension("Alpha.", "Beta."), "Alpha.\n\nBeta.");
-  assertEquals(mergeExtension("Alpha stays.", "Alpha stays. And more."), "Alpha stays. And more.");
+  assertEquals(
+    mergeExtension("Alpha stays.", "Alpha stays. And more."),
+    "Alpha stays. And more.",
+  );
   assertEquals(mergeExtension("Alpha.", "  "), "Alpha.");
 });
 
 Deno.test("extendToTarget stops at the floor and does not call when already long", async () => {
   let calls = 0;
-  const longEnough = await extendToTarget("one two three four", "notes", 3, () => {
-    calls += 1;
-    return Promise.resolve("unused");
-  });
+  const longEnough = await extendToTarget(
+    "one two three four",
+    "notes",
+    3,
+    () => {
+      calls += 1;
+      return Promise.resolve("unused");
+    },
+  );
   assertEquals(calls, 0);
   assertEquals(longEnough.words, 4);
 
@@ -123,13 +144,24 @@ Deno.test("extendToTarget stops when an extension adds no words", async () => {
 });
 
 Deno.test("style pass keeps the longer draft", () => {
-  assertEquals(keepIfNotShortened("one two three four five", "one two"), "one two three four five");
-  assertEquals(keepIfNotShortened("one two three four five", "one two three four six"), "one two three four six");
+  assertEquals(
+    keepIfNotShortened("one two three four five", "one two"),
+    "one two three four five",
+  );
+  assertEquals(
+    keepIfNotShortened("one two three four five", "one two three four six"),
+    "one two three four six",
+  );
 });
 
 Deno.test("style pass keeps a finished cut of a padded draft", () => {
-  const padded = "The API returns snippets for agents rather than links for people. ".repeat(30);
-  const cut = "The API returns snippets for agents rather than links. ".repeat(16).trim();
+  const padded =
+    "The API returns snippets for agents rather than links for people. ".repeat(
+      30,
+    );
+  const cut = "The API returns snippets for agents rather than links. ".repeat(
+    16,
+  ).trim();
   assertEquals(countDraftWords(padded) >= 200, true);
   assertEquals(countDraftWords(cut) >= 80, true);
   assertEquals(keepIfNotShortened(padded, cut), cut);
@@ -137,17 +169,22 @@ Deno.test("style pass keeps a finished cut of a padded draft", () => {
 });
 
 Deno.test("expansion rejects a note that is not about the source paragraph", () => {
-  const note = "HaiMaker previously failed with HTTP 524, a Cloudflare origin timeout. The auto-router sent writing prompts to step-3.7-flash.";
-  const grounded = "HaiMaker failed with HTTP 524 because Cloudflare closed the origin while step-3.7-flash reasoned.";
-  const invented = "The current system architecture utilizes a distributed ledger framework to manage data integrity across multiple nodes.";
+  const note =
+    "HaiMaker previously failed with HTTP 524, a Cloudflare origin timeout. The auto-router sent writing prompts to step-3.7-flash.";
+  const grounded =
+    "HaiMaker failed with HTTP 524 because Cloudflare closed the origin while step-3.7-flash reasoned.";
+  const invented =
+    "The current system architecture utilizes a distributed ledger framework to manage data integrity across multiple nodes.";
   assertEquals(groundedInNote(note, grounded), true);
   assertEquals(groundedInNote(note, invented), false);
   assertEquals(acceptExpansion(note, invented, 80), false);
-  const usable = "HaiMaker failed with HTTP 524 because Cloudflare closed the origin while step-3.7-flash reasoned for more than a minute before the outline arrived.";
+  const usable =
+    "HaiMaker failed with HTTP 524 because Cloudflare closed the origin while step-3.7-flash reasoned for more than a minute before the outline arrived.";
   const longOnTopic = `${usable} ${"detail ".repeat(80)}`;
   assertEquals(groundedInNote(note, longOnTopic), true);
   assertEquals(acceptExpansion(note, usable, 40), true);
-  const draft = "HaiMaker failed with HTTP 524 because Cloudflare closed the origin while step-3.7-flash reasoned for more than a minute.";
+  const draft =
+    "HaiMaker failed with HTTP 524 because Cloudflare closed the origin while step-3.7-flash reasoned for more than a minute.";
   assertEquals(repeatsDraft(draft, usable), true);
   assertEquals(acceptExpansion(note, usable, 40, draft), false);
   assertEquals(acceptExpansion(note, longOnTopic, 40), false);
@@ -156,7 +193,10 @@ Deno.test("expansion rejects a note that is not about the source paragraph", () 
     countWords(fitExtension(`${usable} This clause never finishes`, 40)) >= 20,
     true,
   );
-  assertEquals(factualNotes("Write a 900 word blog post.\n\n" + note).length, 1);
+  assertEquals(
+    factualNotes("Write a 900 word blog post.\n\n" + note).length,
+    1,
+  );
 });
 
 Deno.test("search query is short and skips the writing instruction", () => {
@@ -172,7 +212,8 @@ Deno.test("source notes keep a URL and drop empty bodies", () => {
     {
       title: "Tavily",
       url: "https://docs.tavily.com/search",
-      content: "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen",
+      content:
+        "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen",
     },
     { title: "Empty", url: "https://example.com", content: "" },
   ]);
@@ -188,7 +229,8 @@ Deno.test("search payload ignores a synthesized answer", () => {
       url: "https://docs.tavily.com/search",
       content:
         "Tavily search returns page text for agents. It is not a finished essay. The snippet includes the query and the sources so a writer can quote the page.",
-      raw_content: "BuildrLabs offers a bootcamp in Colombo. This raw page must not become a note.",
+      raw_content:
+        "BuildrLabs offers a bootcamp in Colombo. This raw page must not become a note.",
     }],
   });
   assertEquals(hits.length, 1);
@@ -202,12 +244,14 @@ Deno.test("research drops a hit that does not name the subject", () => {
   const docs = {
     title: "Tavily search",
     url: "https://docs.tavily.com",
-    content: "Tavily returns snippets an agent can quote. The page is long enough to count as a note for the writer today.",
+    content:
+      "Tavily returns snippets an agent can quote. The page is long enough to count as a note for the writer today.",
   };
   const ad = {
     title: "Applied AI Bootcamp",
     url: "https://example.com/bootcamp",
-    content: "The bootcamp runs on Saturdays in Colombo and costs a fixed fee. Seats remain open for professionals who want applied skills.",
+    content:
+      "The bootcamp runs on Saturdays in Colombo and costs a fixed fee. Seats remain open for professionals who want applied skills.",
   };
   assertEquals(relevantToQuery(query, docs), true);
   assertEquals(relevantToQuery(query, ad), false);
