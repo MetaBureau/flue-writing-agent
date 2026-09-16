@@ -1,6 +1,11 @@
 import { useState } from "preact/hooks";
 import type { ModelChoice } from "../src/providers.ts";
-import { WRITE_STAGES, type StageId, type StageStatus, type WriteEvent } from "../src/contract.ts";
+import {
+  type StageId,
+  type StageStatus,
+  WRITE_STAGES,
+  type WriteEvent,
+} from "../src/contract.ts";
 
 interface Props {
   styles: string[];
@@ -27,11 +32,15 @@ function stepClass(status: StageStatus): string {
   return "";
 }
 
-export default function WriteForm({ styles, providers, models, providerProblems = {} }: Props) {
+export default function WriteForm(
+  { styles, providers, models, providerProblems = {} }: Props,
+) {
   const [topic, setTopic] = useState("Write a 900 word essay about pet cats.");
   const [style, setStyle] = useState("economist");
   const [provider, setProvider] = useState(providers[0] ?? "mercury");
-  const [model, setModel] = useState(models[providers[0] ?? "mercury"]?.[0]?.id ?? "");
+  const [model, setModel] = useState(
+    models[providers[0] ?? "mercury"]?.[0]?.id ?? "",
+  );
   const [stages, setStages] = useState<StageMap>(idleStages);
   const [detail, setDetail] = useState("");
   const [markdown, setMarkdown] = useState("");
@@ -87,7 +96,9 @@ export default function WriteForm({ styles, providers, models, providerProblems 
         const frames = buffer.split("\n\n");
         buffer = frames.pop() ?? "";
         for (const frame of frames) {
-          const line = frame.split("\n").find((item) => item.startsWith("data: "));
+          const line = frame.split("\n").find((item) =>
+            item.startsWith("data: ")
+          );
           if (!line) continue;
           applyEvent(JSON.parse(line.slice(6)) as WriteEvent);
         }
@@ -121,7 +132,9 @@ export default function WriteForm({ styles, providers, models, providerProblems 
             value={style}
             onChange={(event) => setStyle(event.currentTarget.value)}
           >
-            {styles.map((name) => <option key={name} value={name}>{name}</option>)}
+            {styles.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
           </select>
           <label class="label" for="provider">Provider</label>
           <select
@@ -134,7 +147,9 @@ export default function WriteForm({ styles, providers, models, providerProblems 
               setModel(models[next]?.[0]?.id ?? "");
             }}
           >
-            {providers.map((name) => <option key={name} value={name}>{name}</option>)}
+            {providers.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
           </select>
           <label class="label" for="model">Model</label>
           <select
@@ -143,9 +158,15 @@ export default function WriteForm({ styles, providers, models, providerProblems 
             value={model}
             onChange={(event) => setModel(event.currentTarget.value)}
           >
-            {(models[provider] ?? []).map((choice) => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
+            {(models[provider] ?? []).map((choice) => (
+              <option key={choice.id} value={choice.id}>{choice.label}</option>
+            ))}
           </select>
-          <button class="btn btn-primary" type="submit" disabled={busy || Boolean(providerProblem)}>
+          <button
+            class="btn btn-primary"
+            type="submit"
+            disabled={busy || Boolean(providerProblem)}
+          >
             {busy ? <span class="loading loading-spinner" /> : "Write"}
           </button>
         </div>
@@ -157,14 +178,18 @@ export default function WriteForm({ styles, providers, models, providerProblems 
             {WRITE_STAGES.map((stage) => (
               <li key={stage.id} class={`step ${stepClass(stages[stage.id])}`}>
                 {stage.label}
-                {stages[stage.id] === "active" ? <span class="loading loading-spinner loading-xs" /> : null}
+                {stages[stage.id] === "active"
+                  ? <span class="loading loading-spinner loading-xs" />
+                  : null}
               </li>
             ))}
           </ul>
           {detail ? <p class="text-sm">{detail}</p> : null}
         </div>
       </section>
-      {providerProblem ? <div class="alert alert-error">{providerProblem}</div> : null}
+      {providerProblem
+        ? <div class="alert alert-error">{providerProblem}</div>
+        : null}
       {error ? <div class="alert alert-error">{error}</div> : null}
       {markdown
         ? (
