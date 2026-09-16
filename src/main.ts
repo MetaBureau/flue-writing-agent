@@ -1,10 +1,8 @@
 /// <reference lib="deno.ns" />
-import { generateOutline, generateDrafts, selectBestDraft } from "./agents/write.ts";
-import { webResearch } from "./tools/web.ts";
+import { generateOutline, generateDrafts, pickDraft } from "./agents/write.ts";
 import { applyEditorialStyle } from "./skills/editorial.ts";
-import { PROVIDERS, ProviderConfig, resolveProvider } from "./providers.ts";
+import { PROVIDERS, resolveProvider } from "./providers.ts";
 
-// Enhanced CLI argument parser
 interface Args {
   topic: string;
   provider?: string;
@@ -53,9 +51,10 @@ function parseArgs(): Args {
     console.log("");
     console.log("Provider configuration via environment variables:");
     for (const [name, cfg] of Object.entries(PROVIDERS)) {
-      console.log(`  ${name.toUpperCase()}_PROVIDER=${name}`);
-      console.log(`  ${name.toUpperCase()}_MODEL_ID=${cfg.defaultModelId}`);
-      console.log(`  ${name.toUpperCase()}_API_KEY=...`);
+      console.log(`  --provider ${name}`);
+      console.log(`  ${cfg.apiKeyEnvVar}=...`);
+      console.log(`  ${cfg.modelEnvVar}=${cfg.defaultModelId}`);
+      console.log(`  ${cfg.urlEnvVar}=${cfg.baseUrl}`);
       console.log("");
     }
     Deno.exit(1);
@@ -85,10 +84,21 @@ function formatOutput(args: Args, content: string) {
   }
 }
 
+export function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+export function topicSlug(topic: string): string {
+  const sixWords = topic.trim().split(/\s+/).slice(0, 6).join(" ");
+  return sixWords
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 async function runWritingWorkflow(args: Args) {
-  // Resolve provider configuration
-  const providerName = args.provider || 
-    (Deno.env.get("FAST_PROVIDER") as keyof typeof PROVIDERS) || 
+  const providerName = args.provider ||
+    (Deno.env.get("FAST_PROVIDER") as keyof typeof PROVIDERS) ||
     "mercury";
 
   const fastProvider = resolveProvider(providerName, "fast");
@@ -106,36 +116,45 @@ async function runWritingWorkflow(args: Args) {
     return;
   }
 
-  // Research phase
-  await log(args, "research", `Fetching sources for "${args.topic}"`);
-  const research = await webResearch(args.topic);
+  const notes = { text: args.topic };
 
-  // Outline phase
   await log(args, "outline", `Generating structure with ${reasoningProvider.name}`);
-  const outline = await generateOutline({}, args.topic, research, reasoningProvider);
+  const outline = await generateOutline({}, notes, reasoningProvider);
 
-  // Draft generation phase
   await log(args, "drafts", `Creating variations with ${fastProvider.name}`);
-  const drafts = await generateDrafts({}, outline, fastProvider);
+  const drafts = await generateDrafts({}, outline, fastProvider, notes);
 
-  // Selection phase
-  await log(args, "selection", "Choosing best draft");
-  const selected = await selectBestDraft({}, drafts, args.style);
+  await log(args, "selection", "Choosing draft by style voice");
+  const selected = pickDraft(drafts, args.style);
 
-  // Editorial styling phase
   await log(args, "style", `Applying ${args.style} editorial rules`);
-  const finalContent = await applyEditorialStyle(selected.content, args.style, fastProvider);
+  const finalContent = await applyEditorialStyle(
+    selected.content,
+    args.style,
+    fastProvider,
+    outline.wordCountTarget,
+  );
 
-  // Format and return
-  return formatOutput(args, finalContent);
+  console.log(`Words: ${countWords(finalContent)}`);
+
+  const formatted = formatOutput(args, finalContent);
+  const slug = topicSlug(args.topic);
+  await Deno.mkdir("output", { recursive: true });
+  const path = `output/${slug}.md`;
+  const tempPath = `${path}.tmp`;
+  await Deno.writeTextFile(tempPath, formatted);
+  await Deno.rename(tempPath, path);
+
+  return formatted;
 }
 
-// Entry point
-const args = parseArgs();
-const output = await runWritingWorkflow(args);
+if (import.meta.main) {
+  const args = parseArgs();
+  const output = await runWritingWorkflow(args);
 
-if (output) {
-  console.log("");
-  console.log("=== Final Output ===");
-  console.log(output);
+  if (output) {
+    console.log("");
+    console.log("=== Final Output ===");
+    console.log(output);
+  }
 }
