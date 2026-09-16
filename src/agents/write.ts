@@ -44,6 +44,7 @@ export const MAX_CONSECUTIVE_REJECTS = 3;
 export const EXTENSION_ASK_RATIO = 1.5;
 export const OUTLINE_MAX_TOKENS = 4096;
 export const DRAFT_MAX_TOKENS = 4096;
+export const REPEAT_RATIO = 0.6;
 
 export function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
@@ -76,10 +77,64 @@ export function contentWords(text: string): string[] {
   ) ?? [];
 }
 
+export function stripSourceLines(paragraph: string): string {
+  return paragraph
+    .split("\n")
+    .filter((line) => !/^(?:Source|URL):/i.test(line.trim()))
+    .join("\n")
+    .trim();
+}
+
+export function describesSourcePage(paragraph: string): boolean {
+  return /students can use/i.test(paragraph) ||
+    /contains \d+ words/i.test(paragraph) ||
+    /contains (?:one|two|three|four|five|six|seven|eight|nine|\d+) hundred words/i
+      .test(paragraph);
+}
+
+export function draftingNotes(notes: string): string {
+  return noteParagraphs(notes)
+    .filter((paragraph) => !describesSourcePage(paragraph))
+    .join("\n\n");
+}
+
 export function factualNotes(notes: string): string[] {
-  return noteParagraphs(notes).filter((paragraph) =>
-    countWords(paragraph) >= 15
+  return noteParagraphs(notes)
+    .map(stripSourceLines)
+    .filter((paragraph) =>
+      countWords(paragraph) >= 15 && !describesSourcePage(paragraph)
+    );
+}
+
+export function isProseExpansion(text: string): boolean {
+  const trimmed = text.trim();
+  if (!/^(?:["“'])?[A-Z0-9]/.test(trimmed)) return false;
+  if (/\blet's count\b/i.test(trimmed) || /\bwait,/i.test(trimmed)) {
+    return false;
+  }
+  return !trimmed.split("\n").some((line) =>
+    /^\s*(?:\d+[.)]|[-*•])\s+\S/.test(line)
   );
+}
+
+export function stripLeadingTitle(text: string): string {
+  return text.replace(/^\uFEFF?\s*# [^\n]*\n*/, "").trim();
+}
+
+export function essayMarkdown(title: string, body: string): string {
+  return `# ${title.trim()}\n\n${stripLeadingTitle(body)}\n`;
+}
+
+export function notesRecord(input: {
+  notes: string;
+  outlineModel: string;
+  draftModel: string;
+  cost: string;
+}): string {
+  const model = input.outlineModel === input.draftModel
+    ? input.outlineModel
+    : `outline ${input.outlineModel}; drafts ${input.draftModel}`;
+  return `Model: ${model}\nCost: ${input.cost}\n\n${input.notes.trim()}\n`;
 }
 
 export function groundedInNote(note: string, extra: string): boolean {
@@ -117,11 +172,23 @@ export function expansionTokenBudget(_asked: number): number {
   return 4096;
 }
 
+export function sharedWordRatio(extra: string, paragraph: string): number {
+  const words = contentWords(extra);
+  if (words.length === 0) return 0;
+  const known = new Set(contentWords(paragraph));
+  return words.filter((word) => known.has(word)).length / words.length;
+}
+
 export function repeatsDraft(draft: string, extra: string): boolean {
-  const known = new Set(contentWords(draft));
-  const extraWords = contentWords(extra);
-  if (extraWords.length < 8) return false;
-  return extraWords.filter((word) => !known.has(word)).length < 4;
+  const pieces = noteParagraphs(extra).filter((piece) =>
+    contentWords(piece).length >= 8
+  );
+  if (pieces.length === 0) return false;
+  return pieces.some((piece) =>
+    noteParagraphs(draft).some((paragraph) =>
+      sharedWordRatio(piece, paragraph) >= REPEAT_RATIO
+    )
+  );
 }
 
 export function extendShouldStop(
@@ -138,11 +205,23 @@ export function acceptExpansion(
   asked: number,
   draft = "",
 ): boolean {
+  if (!isProseExpansion(extra)) return false;
   const added = countWords(extra);
   const ceiling = Math.max(asked + 80, 120);
   if (added < 20 || added > ceiling || !endsAsSentence(extra)) return false;
   if (draft && repeatsDraft(draft, extra)) return false;
   return groundedInNote(note, extra);
+}
+
+export function extendShouldContinue(
+  words: number,
+  target: number,
+  notesLeft: number,
+  calls: number,
+  consecutiveRejects: number,
+): boolean {
+  if (notesLeft <= 0 || words >= target) return false;
+  return !extendShouldStop(calls, consecutiveRejects);
 }
 
 const FALLBACK_OUTLINE = (topic: string): Outline => ({
@@ -386,60 +465,61 @@ export async function extendDraft(
 
   const paragraphs = factualNotes(notes);
   if (paragraphs.length === 0) return text;
-  let round = 0;
   let calls = 0;
   let consecutiveRejects = 0;
-  while (
-    words < target && round < 3 && !extendShouldStop(calls, consecutiveRejects)
-  ) {
-    round += 1;
-    const remaining = paragraphs.length;
-    const each = Math.max(40, Math.ceil((target - words) / remaining));
-    for (let index = 0; index < paragraphs.length && words < target; index++) {
-      if (extendShouldStop(calls, consecutiveRejects)) break;
-      calls += 1;
-      const note = paragraphs[index];
-      let extra = "";
-      try {
-        extra = (await streamChat(model, [
-          { role: "system", content: DRAFT_SYSTEM },
-          { role: "user", content: expansionUserPrompt(note, each, text) },
-        ], {
-          temperature: 0.7,
-          label: `${label}:expand:${round}:${index + 1}`,
-          maxTokens: expansionTokenBudget(each),
-          meter,
-        })).content;
-      } catch (error) {
-        if (!(error instanceof CutOffReply)) throw error;
-        consecutiveRejects += 1;
-        console.log(
-          `[${label}:expand:${round}:${index + 1}] discarded cut-off reply`,
-        );
-        continue;
-      }
-      const fitted = fitExtension(extra, each);
-      if (!acceptExpansion(note, fitted, each, text)) {
-        consecutiveRejects += 1;
-        console.log(
-          `[${label}:expand:${round}:${index + 1}] rejected raw=${
-            countWords(extra)
-          } fitted=${countWords(fitted)}`,
-        );
-        continue;
-      }
-      consecutiveRejects = 0;
-      const merged = mergeExtension(text, fitted);
-      const next = countWords(merged);
-      if (next <= words) continue;
-      text = merged;
-      words = next;
+  let notesLeft = paragraphs.length;
+  for (let index = 0; index < paragraphs.length; index++) {
+    if (
+      !extendShouldContinue(
+        words,
+        target,
+        notesLeft,
+        calls,
+        consecutiveRejects,
+      )
+    ) break;
+    notesLeft -= 1;
+    calls += 1;
+    const each = Math.max(40, Math.ceil((target - words) / paragraphs.length));
+    const note = paragraphs[index];
+    let extra = "";
+    try {
+      extra = (await streamChat(model, [
+        { role: "system", content: DRAFT_SYSTEM },
+        { role: "user", content: expansionUserPrompt(note, each, text) },
+      ], {
+        temperature: 0.7,
+        label: `${label}:expand:${index + 1}`,
+        maxTokens: expansionTokenBudget(each),
+        meter,
+      })).content;
+    } catch (error) {
+      if (!(error instanceof CutOffReply)) throw error;
+      consecutiveRejects += 1;
       console.log(
-        `[${label}:expand:${round}:${
-          index + 1
-        }] ${words} words, target ${target}`,
+        `[${label}:expand:${index + 1}] discarded cut-off reply`,
       );
+      continue;
     }
+    const fitted = fitExtension(extra, each);
+    if (!acceptExpansion(note, fitted, each, text)) {
+      consecutiveRejects += 1;
+      console.log(
+        `[${label}:expand:${index + 1}] rejected raw=${
+          countWords(extra)
+        } fitted=${countWords(fitted)}`,
+      );
+      continue;
+    }
+    consecutiveRejects = 0;
+    const merged = mergeExtension(text, fitted);
+    const next = countWords(merged);
+    if (next <= words) continue;
+    text = merged;
+    words = next;
+    console.log(
+      `[${label}:expand:${index + 1}] ${words} words, target ${target}`,
+    );
   }
   return text;
 }

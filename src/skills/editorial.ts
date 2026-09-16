@@ -12,16 +12,23 @@ export { type StyleRules, styles, styleSystemPrompt };
 
 const STYLE_STUB_WORDS = 80;
 
-export function keepIfNotShortened(original: string, edited: string): string {
+export function keepIfNotShortened(
+  original: string,
+  edited: string,
+  floorWords = 0,
+): string {
   const next = edited.trim();
   if (!next) return original;
   const nextWords = countWords(next);
   const originalWords = countWords(original);
   if (originalWords < 200) {
-    if (nextWords < originalWords * 0.5) return original;
+    if (nextWords < originalWords * 0.5 || nextWords < floorWords) {
+      return original;
+    }
     return next;
   }
-  if (nextWords < STYLE_STUB_WORDS || !endsAsSentence(next)) return original;
+  const floor = Math.max(STYLE_STUB_WORDS, floorWords);
+  if (nextWords < floor || !endsAsSentence(next)) return original;
   return next;
 }
 
@@ -43,6 +50,7 @@ export const applyEditorialStyle = async (
   model: ResolvedProvider,
   wordCountTarget: number,
   meter?: RunMeter,
+  floorWords = 0,
 ): Promise<string> => {
   const style = isStyleName(styleName)
     ? styles[styleName]
@@ -66,7 +74,7 @@ export const applyEditorialStyle = async (
       console.log(`[style:${styleName}] discarded cut-off reply`);
       return text;
     }
-    const kept = keepIfNotShortened(text, edited);
+    const kept = keepIfNotShortened(text, edited, floorWords);
     if (kept === text && edited.trim()) {
       console.log(
         `[style:${styleName}] discarded rewrite (${countWords(edited)} words)`,

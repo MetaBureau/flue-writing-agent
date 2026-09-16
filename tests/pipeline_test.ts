@@ -7,19 +7,26 @@ import {
 import {
   acceptExpansion,
   countWords as countDraftWords,
+  describesSourcePage,
   type Draft,
+  draftingNotes,
   draftUserPrompt,
+  essayMarkdown,
   expansionTokenBudget,
+  extendShouldContinue,
   extendShouldStop,
   extendToTarget,
   factualNotes,
   fitExtension,
   groundedInNote,
+  isProseExpansion,
   mergeExtension,
+  notesRecord,
   OUTLINE_MAX_TOKENS,
   outlineUserPrompt,
   pickDraft,
   repeatsDraft,
+  stripLeadingTitle,
   wordCountFromTopic,
   wordsToAsk,
 } from "../src/agents/write.ts";
@@ -181,6 +188,15 @@ Deno.test("style pass keeps a finished cut of a padded draft", () => {
   assertEquals(countDraftWords(cut) >= 80, true);
   assertEquals(keepIfNotShortened(padded, cut), cut);
   assertEquals(keepIfNotShortened(padded, "Too short."), padded);
+  const extended = `${padded} Extra fact from the notes stays in the piece.`;
+  const cutToEightyOne = "The API returns snippets for agents. ".repeat(17)
+    .trim();
+  assertEquals(countDraftWords(cutToEightyOne) > 80, true);
+  assertEquals(countDraftWords(cutToEightyOne) < countDraftWords(padded), true);
+  assertEquals(
+    keepIfNotShortened(extended, cutToEightyOne, countDraftWords(padded)),
+    extended,
+  );
 });
 
 Deno.test("expansion rejects a note that is not about the source paragraph", () => {
@@ -345,6 +361,86 @@ Deno.test("extend stops after three rejects or six calls", () => {
   assertEquals(extendShouldStop(0, 2), false);
   assertEquals(extendShouldStop(1, 3), true);
   assertEquals(extendShouldStop(6, 0), true);
+  assertEquals(extendShouldContinue(100, 900, 0, 0, 0), false);
+  assertEquals(extendShouldContinue(900, 900, 2, 0, 0), false);
+  assertEquals(extendShouldContinue(100, 900, 2, 0, 0), true);
+});
+
+const PET_CAT_PARAGRAPH =
+  "show how cats act as pets. School-going students can use these essays for their essay writing competitions. Students can also use them for speech giving contests. Additionally, students can use them in other similar competitions. Individuals can select any of these essays according to their specific needs. The author of the text keeps a pet cat and enjoys being around her. The author loves this adorable pet cat. If you have ever kept a cat as a pet, you will know that cats are very peculiar animals. The author describes their own pet cat as a white-coloured, soft, and furry animal. The author simply loves this pet cat and enjoys her presence.";
+
+const PET_CAT_REPEAT =
+  "The source provides short and long essays about a pet cat in the English language. These essays show how cats act as pets. School-going students can use these essays for their essay writing competitions. Students can also use them for speech giving contests. Additionally, students can use them in other similar competitions. Individuals can select any of these essays according to their specific needs. The author of the text keeps a pet cat and enjoys being around her. The author loves this adorable pet cat. The first essay contains two hundred words. The second essay contains three hundred words.";
+
+const PET_CAT_SCRATCH = `Let's count the words of this version:
+1. The (1)
+2. provided (2)
+3.
+
+wait, hyphenated word. Let's count as two words to be safe, or one.`;
+
+Deno.test("expansion rejects pet-cat scratch and a lowercase fragment", () => {
+  assertEquals(isProseExpansion(PET_CAT_SCRATCH), false);
+  assertEquals(isProseExpansion(PET_CAT_PARAGRAPH), false);
+  assertEquals(
+    acceptExpansion(
+      "notes about cats " + PET_CAT_PARAGRAPH,
+      PET_CAT_SCRATCH,
+      80,
+    ),
+    false,
+  );
+  assertEquals(
+    isProseExpansion("Cats are peculiar animals with complex behavior."),
+    true,
+  );
+  assertEquals(isProseExpansion("86.4 million cats live in the USA."), true);
+  assertEquals(isProseExpansion("eBay lists used cat carriers."), false);
+});
+
+Deno.test("repeat check uses shared-word ratio against each paragraph", () => {
+  assertEquals(repeatsDraft(PET_CAT_PARAGRAPH, PET_CAT_REPEAT), true);
+  assertEquals(
+    repeatsDraft(
+      "HaiMaker failed with HTTP 524 because Cloudflare closed the origin.",
+      PET_CAT_REPEAT,
+    ),
+    false,
+  );
+});
+
+Deno.test("extend notes drop page descriptions and source lines", () => {
+  const mill =
+    "School-going students can use these essays for competitions. The first essay contains 200 words and the second contains 300 words for a speech contest that fills the paragraph.";
+  const product =
+    "Source: HaiMaker\nURL: https://example.com/haimaker\nHaiMaker previously failed with HTTP 524, a Cloudflare origin timeout. The auto-router sent writing prompts to step-3.7-flash.";
+  assertEquals(describesSourcePage(mill), true);
+  const kept = factualNotes(`${mill}\n\n${product}`);
+  assertEquals(kept.length, 1);
+  assertFalse(kept[0].includes("Source:"));
+  assertFalse(kept[0].includes("URL:"));
+  assertStringIncludes(kept[0], "HTTP 524");
+  const drafted = draftingNotes(`essay on my pet cat\n\n${mill}\n\n${product}`);
+  assertFalse(drafted.includes("students can use"));
+  assertStringIncludes(drafted, "Source: HaiMaker");
+  assertStringIncludes(drafted, "URL: https://example.com/haimaker");
+});
+
+Deno.test("essay markdown has one title and no style line", () => {
+  const body = "# Essay on My Pet Cat\n\nCats are peculiar animals.";
+  assertEquals(stripLeadingTitle(body), "Cats are peculiar animals.");
+  const essay = essayMarkdown("Essay on My Pet Cat", body);
+  assertFalse(essay.includes("## Style:"));
+  assertEquals(essay.startsWith("# Essay on My Pet Cat\n\nCats"), true);
+  const notes = notesRecord({
+    notes: "A cat fact.",
+    outlineModel: "google/gemini-3.1-flash-lite",
+    draftModel: "google/gemini-3.1-flash-lite",
+    cost: "estimate $0.010",
+  });
+  assertStringIncludes(notes, "Model: google/gemini-3.1-flash-lite");
+  assertStringIncludes(notes, "Cost: estimate $0.010");
+  assertStringIncludes(notes, "A cat fact.");
 });
 
 Deno.test("picker label uses catalog price and does not claim default reasoning", () => {

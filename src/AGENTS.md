@@ -6,7 +6,7 @@ Runtime for the writing CLI: parse flags, resolve models, gather notes, run the 
 
 ## Ownership
 
-- `workflow.ts` — stage events for the form. Research, outline, drafts, style, extend, then the essay markdown.
+- `workflow.ts` — stage events for the form. Research, outline, drafts, extend, style, then the essay markdown and a notes sidecar.
 - `providers.ts` — HaiMaker and Mercury registry, each provider's curated `models` ids for the picker, and env resolution
 - `catalog.ts` — public model hub parse, picker labels, and exact key model-list intersection. Empty intersection does not fall back to the curated ids
 - `complete.ts` — streaming (and JSON fallback) chat completions, usage, and cut-off rejection
@@ -27,9 +27,9 @@ Parent root owns `deno.json` tasks and env templates. Child folders own drafting
 - Do not send `reasoning_effort` unless the catalog lists it and the value is `low`, `medium`, or `high`. Omit it by default
 - Picker labels say "can reason" when the catalog sets `supports_reasoning`. Do not label a model as reasoning by default from a trial table
 - Research: advanced search, at most 5 sources, 180 words of the result snippet. No raw page body, no synthesized answer. Drop furniture sentences. A hit must name a distinctive word from the query. HTTP or network failure continues with the topic only
-- Notes are `topic + research.text`; they are the only facts later stages may use
+- Notes start as `topic + research.text`. Page-description paragraphs are dropped before the outline. Those filtered notes are the only facts later stages may use
 - Dry run prints config and does not call models or Tavily beyond the key-presence check
-- Atomic write: `output/<slug>.md.tmp` then rename
+- Atomic write: `output/<slug>.md.tmp` then rename. The same slug gets `output/<slug>.notes.md` with the notes, model ids, and estimate
 
 ## Work Guidance
 

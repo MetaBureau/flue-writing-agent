@@ -1,10 +1,14 @@
 /// <reference lib="deno.ns" />
 import {
   countWords,
+  draftingNotes,
+  essayMarkdown,
   extendDraft,
   generateDrafts,
   generateOutline,
+  notesRecord,
   pickDraft,
+  stripLeadingTitle,
 } from "./agents/write.ts";
 import { loadPrices } from "./catalog.ts";
 import { formatRun, RunMeter } from "./complete.ts";
@@ -109,22 +113,33 @@ function log(args: Args, phase: string, detail: string) {
 }
 
 function formatOutput(args: Args, content: string) {
+  const body = stripLeadingTitle(content);
   if (args.outputFormat === "json") {
     return JSON.stringify(
       {
         topic: args.topic,
         style: args.style,
-        content,
+        content: body,
         generatedAt: new Date().toISOString(),
       },
       null,
       2,
     );
   } else if (args.outputFormat === "markdown") {
-    return `# ${args.topic}\n\n## Style: ${args.style}\n\n---\n\n${content}`;
+    return essayMarkdown(args.topic, body);
   } else {
-    return content;
+    return body;
   }
+}
+
+export async function writeOutputFile(
+  path: string,
+  body: string,
+): Promise<void> {
+  await Deno.mkdir("output", { recursive: true });
+  const tempPath = `${path}.tmp`;
+  await Deno.writeTextFile(tempPath, body);
+  await Deno.rename(tempPath, path);
 }
 
 export { countWords } from "./agents/write.ts";
@@ -172,7 +187,9 @@ async function runWritingWorkflow(args: Args) {
   const research = await gatherResearch(args.topic);
   if (research.count > 0) console.log(`Research: ${research.count} sources`);
   const notes = {
-    text: [args.topic, research.text].filter(Boolean).join("\n\n"),
+    text: draftingNotes(
+      [args.topic, research.text].filter(Boolean).join("\n\n"),
+    ),
     topic: args.topic,
   };
 
@@ -196,31 +213,30 @@ async function runWritingWorkflow(args: Args) {
 
     log(args, "selection", "Choosing draft by style voice");
     const selected = pickDraft(drafts, args.style);
+    const draft = stripLeadingTitle(selected.content);
     console.log(
-      `[draft:${selected.style}] ${
-        countWords(selected.content)
-      } words before style`,
+      `[draft:${selected.style}] ${countWords(draft)} words before extend`,
     );
 
+    log(args, "extend", "Adding unused facts from the notes");
+    const extended = await extendDraft(
+      draft,
+      notes.text,
+      outline.wordCountTarget,
+      fastProvider,
+      "extend",
+      meter,
+    );
+    console.log(cost());
+
     log(args, "style", `Applying ${args.style} editorial rules`);
-    const styled = await applyEditorialStyle(
-      selected.content,
+    const finalContent = await applyEditorialStyle(
+      extended,
       args.style,
       fastProvider,
       outline.wordCountTarget,
       meter,
-    );
-    console.log(cost());
-    console.log(`[style:${args.style}] ${countWords(styled)} words`);
-
-    log(args, "extend", "Adding unused facts from the notes");
-    const finalContent = await extendDraft(
-      styled,
-      notes.text,
-      outline.wordCountTarget,
-      fastProvider,
-      `style:${args.style}`,
-      meter,
+      countWords(extended) > countWords(draft) ? countWords(draft) : 0,
     );
     console.log(cost());
 
@@ -228,11 +244,17 @@ async function runWritingWorkflow(args: Args) {
 
     const formatted = formatOutput(args, finalContent);
     const slug = topicSlug(args.topic);
-    await Deno.mkdir("output", { recursive: true });
     const path = `output/${slug}.md`;
-    const tempPath = `${path}.tmp`;
-    await Deno.writeTextFile(tempPath, formatted);
-    await Deno.rename(tempPath, path);
+    await writeOutputFile(path, formatted);
+    await writeOutputFile(
+      `output/${slug}.notes.md`,
+      notesRecord({
+        notes: notes.text,
+        outlineModel: reasoningProvider.modelId ?? reasoningProvider.name,
+        draftModel: fastProvider.modelId ?? fastProvider.name,
+        cost: cost(),
+      }),
+    );
 
     return formatted;
   } catch (error) {

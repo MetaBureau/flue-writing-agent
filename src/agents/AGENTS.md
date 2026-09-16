@@ -21,8 +21,12 @@ Flue writing agent, plus the older notes-only draft script.
 - Outline sends `max_completion_tokens` (`OUTLINE_MAX_TOKENS`, 4096), the same cap as drafts and style
 - Draft voices: conversational, professional, analytical. `VOICE_FOR_STYLE` maps economist and strunk-white to analytical, monocle to conversational, professional to professional
 - Drafts cover every note, say each fact once, and stop when notes are covered; no closing paragraph
-- `extendDraft` unpacks factual note paragraphs (`>= 15` words) one at a time; `acceptExpansion` requires overlap with the source note, rejects off-topic text, and rejects an expansion that repeats the draft (`repeatsDraft`)
-- Extend stops after 3 consecutive rejects or 6 calls (`MAX_CONSECUTIVE_REJECTS`, `MAX_EXTEND_CALLS`). A cut-off reply counts as a reject and is not copied
+- `draftingNotes` drops paragraphs that describe the source page (`students can use`, `contains N words`) before the outline. Source titles and URLs stay. Outline, drafts, extend, and the notes file all use that text
+- `extendDraft` unpacks those notes one paragraph at a time (`>= 15` words) and then drops `Source:` and `URL:` lines
+- `acceptExpansion` requires overlap with the source note, rejects off-topic text, and rejects an expansion that repeats a draft paragraph (`repeatsDraft`, shared-word ratio `REPEAT_RATIO`)
+- An expansion must be prose: it starts with a capital letter or a digit, has no numbered or bulleted lines, and has no scratch phrases (`let's count`, `wait,`)
+- Extend makes one pass over the remaining notes. It stops when those notes are gone, the word floor is reached, or after 3 consecutive rejects or 6 calls. It does not start another round to fill the target. A cut-off reply counts as a reject and is not copied
+- The saved essay is one `#` title plus the body. No `## Style:` line. A leading `#` title in the draft is stripped
 - Missing API key: heuristic outline and stub drafts, no network
 
 ## Work Guidance

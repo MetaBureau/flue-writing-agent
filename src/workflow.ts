@@ -1,14 +1,19 @@
 import {
+  countWords,
+  draftingNotes,
+  essayMarkdown,
   extendDraft,
   generateDrafts,
   generateOutline,
+  notesRecord,
   pickDraft,
+  stripLeadingTitle,
 } from "./agents/write.ts";
 import type { EditorialStyle } from "./agents/write.ts";
 import { loadPrices } from "./catalog.ts";
 import { formatRun, RunMeter } from "./complete.ts";
 import { type StageId, type WriteEvent } from "./contract.ts";
-import { topicSlug } from "./main.ts";
+import { topicSlug, writeOutputFile } from "./main.ts";
 import { gatherResearch } from "./research.ts";
 import { applyEditorialStyle } from "./skills/editorial.ts";
 import {
@@ -50,7 +55,9 @@ export async function* writeStages(input: {
     };
     const research = await gatherResearch(input.topic);
     const notes = {
-      text: [input.topic, research.text].filter(Boolean).join("\n\n"),
+      text: draftingNotes(
+        [input.topic, research.text].filter(Boolean).join("\n\n"),
+      ),
       topic: input.topic,
     };
     yield {
@@ -91,36 +98,43 @@ export async function* writeStages(input: {
       detail: `${selected.style} · ${cost()}`,
     };
 
-    stage = "style";
-    yield { type: "stage", id: "style", status: "active", detail: input.style };
-    const styled = await applyEditorialStyle(
-      selected.content,
-      input.style,
-      fast,
-      outline.wordCountTarget,
-      meter,
-    );
-    yield { type: "stage", id: "style", status: "done", detail: cost() };
-
     stage = "extend";
     yield { type: "stage", id: "extend", status: "active" };
-    const content = await extendDraft(
-      styled,
+    const draft = stripLeadingTitle(selected.content);
+    const extended = await extendDraft(
+      draft,
       notes.text,
       outline.wordCountTarget,
       fast,
-      `style:${input.style}`,
+      "extend",
       meter,
     );
     yield { type: "stage", id: "extend", status: "done", detail: cost() };
 
-    const markdown =
-      `# ${outline.title}\n\n## Style: ${input.style}\n\n---\n\n${content}`;
-    const path = `output/${topicSlug(outline.title || input.topic)}.md`;
-    await Deno.mkdir("output", { recursive: true });
-    const tempPath = `${path}.tmp`;
-    await Deno.writeTextFile(tempPath, markdown);
-    await Deno.rename(tempPath, path);
+    stage = "style";
+    yield { type: "stage", id: "style", status: "active", detail: input.style };
+    const content = await applyEditorialStyle(
+      extended,
+      input.style,
+      fast,
+      outline.wordCountTarget,
+      meter,
+      countWords(extended) > countWords(draft) ? countWords(draft) : 0,
+    );
+    yield { type: "stage", id: "style", status: "done", detail: cost() };
+
+    const markdown = essayMarkdown(outline.title, content);
+    const slug = topicSlug(outline.title || input.topic);
+    await writeOutputFile(`output/${slug}.md`, markdown);
+    await writeOutputFile(
+      `output/${slug}.notes.md`,
+      notesRecord({
+        notes: notes.text,
+        outlineModel: reasoning.modelId ?? reasoning.name,
+        draftModel: fast.modelId ?? fast.name,
+        cost: cost(),
+      }),
+    );
     yield { type: "essay", markdown };
   } catch (error) {
     const message = error instanceof Error

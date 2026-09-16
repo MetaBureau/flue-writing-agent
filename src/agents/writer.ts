@@ -4,6 +4,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { setProvider, useInitialData, useModel, useTool } from "@flue/runtime";
 import { mkdir, writeFile } from "node:fs/promises";
 import * as v from "valibot";
+import { essayMarkdown } from "./write.ts";
 import { gatherResearch } from "../notes.ts";
 import {
   STYLE_NAMES,
@@ -142,10 +143,7 @@ export function Writer() {
     async run({ data }) {
       const path = outputPath ?? `output/${slug(data.title)}.md`;
       await mkdir("output", { recursive: true });
-      await writeFile(
-        path,
-        `# ${data.title}\n\n## Style: ${style.key}\n\n---\n\n${data.markdown}`,
-      );
+      await writeFile(path, essayMarkdown(data.title, data.markdown));
       return `Saved ${path}`;
     },
   });

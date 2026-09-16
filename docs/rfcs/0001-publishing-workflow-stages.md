@@ -1,7 +1,7 @@
 # RFC 0001: Align writing stages with an AI-era publishing workflow
 
-- Status: Draft. Phase 0 is implemented except the actual-cost half of item 5.
-- Date: 2026-09-17 (updated 2026-09-17: pet-cat findings, Phase 0 based on the HaiMaker docs, peer review, then the Phase 0 implementation)
+- Status: Draft. Phase 0 is implemented except the actual-cost half of item 5. Phase 1 items 1–6 are implemented. Items 7–9 are not approved.
+- Date: 2026-09-17 (updated 2026-09-17: pet-cat findings, Phase 0, peer review, then Phase 1 items 1–6)
 - Author: Stew Milne
 - Scope: `src/workflow.ts`, `src/main.ts`, `src/complete.ts`, `src/providers.ts`, `src/notes.ts`, `src/agents/write.ts`, `src/agents/writer.ts`, `src/skills/`, `src/contract.ts`, `islands/WriteForm.tsx`
 
@@ -15,7 +15,7 @@ This RFC maps each stage to a traditional publishing workflow and records that e
 
 ## Current pipeline
 
-`research → outline → drafts (3 tones) → pickDraft → style → extend → save`
+Before Phase 1 the order was `research → outline → drafts (3 tones) → pickDraft → style → extend → save`. Phase 1 runs extend before style: `research → outline → drafts (3 tones) → pickDraft → extend → style → save`.
 
 The form and the CLI run the same stages. One provider and model (chosen in the form or with `--model`) runs every stage. Before Phase 0, `streamChat` sent no reasoning setting, accepted any `finish_reason`, and recorded no token usage or cost.
 
@@ -224,13 +224,15 @@ Items 1–5 can ship after Phase 0. Item 6 needs Phase 0's usage log (item 5), n
 
 1. Reject expansions that are not prose: numbered or bulleted lines, scratch-work phrases ("let's count", "wait,"), and text that does not start with a capital letter. Add a test using the pet-cat scratch work.
 2. Detect repeats against every existing paragraph by shared-word ratio, not a count of new words.
-3. Drop notes that describe the source page itself ("this essay contains N words", "students can use"). Leave out `Source:` / `URL:` lines when extending.
-4. Run `extend` before `style`, so all text is styled, and stop when no good notes are left rather than always filling to target.
+3. Drop notes that describe the source page itself ("this essay contains N words", "students can use") before the outline, and give that text to every stage. Leave out `Source:` / `URL:` lines when extending, not before. The drafts still need the source titles and URLs.
+4. Run `extend` before `style`, so all text is styled, and stop when no good notes are left rather than always filling to target. When extend added words, style may not return a piece shorter than the draft before extend.
 5. Remove a leading `#` title from the draft. Stop writing `## Style:` into the essay in `workflow.ts`, `main.ts`, and `writer.ts`.
 6. Save the notes, model, and run cost next to the essay (`output/<slug>.notes.md`).
 7. Write one draft in the voice from `VOICE_FOR_STYLE` instead of three.
 8. Make output filenames unique (slug plus timestamp or run id).
 9. Remove "add constructive framing" from the Monocle transformation.
+
+Items 1–6 are in the form and CLI. The Flue `Writer` agent now omits `## Style:` and a second title, but it still does not call `streamChat`, so items 1–4 and 6 do not apply on that path. Items 7–9 stay out.
 
 ### Phase 2: fact-check and citations
 

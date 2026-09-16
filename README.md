@@ -103,9 +103,9 @@ src/
 3. **Outline**: Generate a structured outline with the chosen model
 4. **Draft**: Write conversational, professional, and analytical drafts
 5. **Select**: Keep the draft voice that matches `--style`
-6. **Style pass**: Rewrite the selected draft. Cut praise, repetition, ads, and biographies. Keep names, numbers, and URLs
-7. **Extend**: Add unused on-topic facts until the word floor. Stop when an expansion repeats the draft
-8. **Save**: Print the essay and write `output/<slug>.md`
+6. **Extend**: Add unused on-topic facts from notes that are not about the source page. Stop when those notes are gone, not by looping until the word floor
+7. **Style pass**: Rewrite the extended draft. Cut praise, repetition, ads, and biographies. Keep names, numbers, and URLs
+8. **Save**: Print the essay and write `output/<slug>.md` plus `output/<slug>.notes.md` (notes, model, estimate). No `## Style:` line in the essay
 
 ## Security
 
