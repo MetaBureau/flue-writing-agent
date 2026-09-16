@@ -49,16 +49,18 @@ deno task start "Testing" --dry-run
 The agent supports seamless provider switching via environment variables:
 
 ```bash
-# Mercury (default for reasoning)
+# Mercury
 export FAST_PROVIDER=mercury
 export FAST_MODEL_ID=hermes-3-70b
 export FAST_MODEL_KEY=...
 
-# Or HaiMaker (recommended for fast drafts)
-export FAST_PROVIDER=haimaker
-export FAST_MODEL_ID=haimaker/auto
-export FAST_MODEL_KEY=...
+# HaiMaker. The code reads HAIMAKER_API_KEY, not FAST_MODEL_KEY.
+# Do not set FAST_MODEL_ID=haimaker/auto. That model errors until a router is assigned.
+export HAIMAKER_API_KEY=...
+export HAIMAKER_MODEL_ID=google/gemini-3.1-flash-lite
 ```
+
+HaiMaker spend is bounded by the key, not by this app. Use a service account key and set `max_budget`, `budget_duration`, and `soft_budget` there. `soft_budget` alerts and does not block. Set `models` to the picker list. `model_max_budget` is optional.
 
 See `.env.example` for complete provider options.
 
@@ -88,7 +90,7 @@ src/
 ## Features
 
 - **Topic notes**: The topic string plus Tavily page excerpts. Prompts forbid extra sections, and an expansion is rejected if it is not about its note
-- **Dual-Model**: Fast model for drafts, reasoning model for outline
+- **One chosen model**: The form and `--model` run every stage on that model. Without an override, fast and reasoning env vars can still differ
 - **Style Enforcement**: Apply editorial rules (Economist, Strunk & White, Monocle, Professional)
 - **Provider Abstraction**: Unified interface for any OpenAI-compatible API (HaiMaker, Mercury)
 - **Output Formatting**: Markdown, JSON, or plain text
@@ -98,7 +100,7 @@ src/
 
 1. **Research**: Tavily search for page excerpts. No synthesized answer. If the call fails, continue with the topic only
 2. **Notes**: The topic string plus those excerpts
-3. **Outline**: Generate a structured outline with the reasoning model
+3. **Outline**: Generate a structured outline with the chosen model
 4. **Draft**: Write conversational, professional, and analytical drafts
 5. **Select**: Keep the draft voice that matches `--style`
 6. **Style pass**: Rewrite the selected draft. Cut praise, repetition, ads, and biographies. Keep names, numbers, and URLs

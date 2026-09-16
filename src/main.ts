@@ -6,6 +6,8 @@ import {
   generateOutline,
   pickDraft,
 } from "./agents/write.ts";
+import { loadPrices } from "./catalog.ts";
+import { formatRun, RunMeter } from "./complete.ts";
 import { applyEditorialStyle } from "./skills/editorial.ts";
 import { gatherResearch } from "./research.ts";
 import { PROVIDERS, resolveProvider } from "./providers.ts";
@@ -174,49 +176,69 @@ async function runWritingWorkflow(args: Args) {
     topic: args.topic,
   };
 
-  log(args, "outline", `Generating structure with ${reasoningProvider.name}`);
-  const outline = await generateOutline({}, notes, reasoningProvider);
+  const prices = await loadPrices();
+  const meter = new RunMeter();
+  const cost = () => formatRun(meter, prices);
+  try {
+    log(args, "outline", `Generating structure with ${reasoningProvider.name}`);
+    const outline = await generateOutline({}, notes, reasoningProvider, meter);
+    console.log(cost());
 
-  log(args, "drafts", `Creating variations with ${fastProvider.name}`);
-  const drafts = await generateDrafts({}, outline, fastProvider, notes);
+    log(args, "drafts", `Creating variations with ${fastProvider.name}`);
+    const drafts = await generateDrafts(
+      {},
+      outline,
+      fastProvider,
+      notes,
+      meter,
+    );
+    console.log(cost());
 
-  log(args, "selection", "Choosing draft by style voice");
-  const selected = pickDraft(drafts, args.style);
-  console.log(
-    `[draft:${selected.style}] ${
-      countWords(selected.content)
-    } words before style`,
-  );
+    log(args, "selection", "Choosing draft by style voice");
+    const selected = pickDraft(drafts, args.style);
+    console.log(
+      `[draft:${selected.style}] ${
+        countWords(selected.content)
+      } words before style`,
+    );
 
-  log(args, "style", `Applying ${args.style} editorial rules`);
-  const styled = await applyEditorialStyle(
-    selected.content,
-    args.style,
-    fastProvider,
-    outline.wordCountTarget,
-  );
-  console.log(`[style:${args.style}] ${countWords(styled)} words`);
+    log(args, "style", `Applying ${args.style} editorial rules`);
+    const styled = await applyEditorialStyle(
+      selected.content,
+      args.style,
+      fastProvider,
+      outline.wordCountTarget,
+      meter,
+    );
+    console.log(cost());
+    console.log(`[style:${args.style}] ${countWords(styled)} words`);
 
-  log(args, "extend", "Adding unused facts from the notes");
-  const finalContent = await extendDraft(
-    styled,
-    notes.text,
-    outline.wordCountTarget,
-    fastProvider,
-    `style:${args.style}`,
-  );
+    log(args, "extend", "Adding unused facts from the notes");
+    const finalContent = await extendDraft(
+      styled,
+      notes.text,
+      outline.wordCountTarget,
+      fastProvider,
+      `style:${args.style}`,
+      meter,
+    );
+    console.log(cost());
 
-  console.log(`Words: ${countWords(finalContent)}`);
+    console.log(`Words: ${countWords(finalContent)}`);
 
-  const formatted = formatOutput(args, finalContent);
-  const slug = topicSlug(args.topic);
-  await Deno.mkdir("output", { recursive: true });
-  const path = `output/${slug}.md`;
-  const tempPath = `${path}.tmp`;
-  await Deno.writeTextFile(tempPath, formatted);
-  await Deno.rename(tempPath, path);
+    const formatted = formatOutput(args, finalContent);
+    const slug = topicSlug(args.topic);
+    await Deno.mkdir("output", { recursive: true });
+    const path = `output/${slug}.md`;
+    const tempPath = `${path}.tmp`;
+    await Deno.writeTextFile(tempPath, formatted);
+    await Deno.rename(tempPath, path);
 
-  return formatted;
+    return formatted;
+  } catch (error) {
+    console.log(cost());
+    throw error;
+  }
 }
 
 if (import.meta.main) {

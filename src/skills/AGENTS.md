@@ -16,6 +16,7 @@ Rewrite a finished draft for an editorial profile without dropping claims or add
 - Inputs under 200 words still reject a rewrite under half the original word count
 - Do not pad toward the word floor. `main.ts` extends after this pass
 - Missing API key returns the input unchanged
+- A cut-off style reply is discarded. The input is kept
 
 ## Work Guidance
 

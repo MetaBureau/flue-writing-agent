@@ -1,4 +1,4 @@
-import { streamChat } from "../complete.ts";
+import { CutOffReply, type RunMeter, streamChat } from "../complete.ts";
 import { countWords, endsAsSentence } from "../agents/write.ts";
 import { ResolvedProvider } from "../providers.ts";
 import {
@@ -42,6 +42,7 @@ export const applyEditorialStyle = async (
   styleName: string,
   model: ResolvedProvider,
   wordCountTarget: number,
+  meter?: RunMeter,
 ): Promise<string> => {
   const style = isStyleName(styleName)
     ? styles[styleName]
@@ -49,10 +50,22 @@ export const applyEditorialStyle = async (
   let result = text;
 
   if (model.apiKey) {
-    const edited = await streamChat(model, [
-      { role: "system", content: styleSystemPrompt(style) },
-      { role: "user", content: styleUserPrompt(text, wordCountTarget) },
-    ], { temperature: 0.2, label: `style:${styleName}`, maxTokens: 4096 });
+    let edited = "";
+    try {
+      edited = (await streamChat(model, [
+        { role: "system", content: styleSystemPrompt(style) },
+        { role: "user", content: styleUserPrompt(text, wordCountTarget) },
+      ], {
+        temperature: 0.2,
+        label: `style:${styleName}`,
+        maxTokens: 4096,
+        meter,
+      })).content;
+    } catch (error) {
+      if (!(error instanceof CutOffReply)) throw error;
+      console.log(`[style:${styleName}] discarded cut-off reply`);
+      return text;
+    }
     const kept = keepIfNotShortened(text, edited);
     if (kept === text && edited.trim()) {
       console.log(

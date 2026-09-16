@@ -1,3 +1,5 @@
+import { type ReasoningEffort, reasoningEffortField } from "./catalog.ts";
+
 export interface CompletionTarget {
   name: string;
   baseUrl?: string;
@@ -10,10 +12,135 @@ export interface ChatMessage {
   content: string;
 }
 
-interface CompleteOptions {
+export interface TokenUsage {
+  promptTokens: number;
+  cachedTokens: number;
+  completionTokens: number;
+  reasoningTokens: number;
+}
+
+export interface ChatResult {
+  content: string;
+  finishReason: string | undefined;
+  usage: TokenUsage;
+}
+
+export interface CompleteOptions {
   temperature: number;
   label: string;
   maxTokens?: number;
+  reasoningEffort?: string;
+  supportedParams?: readonly string[];
+  meter?: RunMeter;
+}
+
+export const EMPTY_USAGE: TokenUsage = {
+  promptTokens: 0,
+  cachedTokens: 0,
+  completionTokens: 0,
+  reasoningTokens: 0,
+};
+
+export class CutOffReply extends Error {
+  readonly usage: TokenUsage;
+  readonly modelId: string;
+
+  constructor(label: string, modelId: string, usage: TokenUsage) {
+    super(`${label} was cut off (finish_reason: length)`);
+    this.name = "CutOffReply";
+    this.usage = usage;
+    this.modelId = modelId;
+  }
+}
+
+export class RunMeter {
+  readonly byModel = new Map<string, TokenUsage>();
+
+  add(modelId: string, usage: TokenUsage): void {
+    const current = this.byModel.get(modelId) ?? { ...EMPTY_USAGE };
+    this.byModel.set(modelId, {
+      promptTokens: current.promptTokens + usage.promptTokens,
+      cachedTokens: current.cachedTokens + usage.cachedTokens,
+      completionTokens: current.completionTokens + usage.completionTokens,
+      reasoningTokens: current.reasoningTokens + usage.reasoningTokens,
+    });
+  }
+
+  totals(): TokenUsage {
+    let total = { ...EMPTY_USAGE };
+    for (const usage of this.byModel.values()) {
+      total = {
+        promptTokens: total.promptTokens + usage.promptTokens,
+        cachedTokens: total.cachedTokens + usage.cachedTokens,
+        completionTokens: total.completionTokens + usage.completionTokens,
+        reasoningTokens: total.reasoningTokens + usage.reasoningTokens,
+      };
+    }
+    return total;
+  }
+}
+
+export function estimateUsd(
+  meter: RunMeter,
+  prices: ReadonlyMap<
+    string,
+    { inputPerToken: number; outputPerToken: number }
+  >,
+): { usd: number; complete: boolean } {
+  let usd = 0;
+  let complete = meter.byModel.size > 0;
+  for (const [modelId, usage] of meter.byModel) {
+    const price = prices.get(modelId);
+    if (!price) {
+      complete = false;
+      continue;
+    }
+    usd += usage.promptTokens * price.inputPerToken +
+      usage.completionTokens * price.outputPerToken;
+  }
+  return { usd, complete };
+}
+
+export function formatEstimate(
+  estimate: { usd: number; complete: boolean } | undefined,
+): string {
+  if (!estimate || (!estimate.complete && estimate.usd === 0)) {
+    return "estimate unavailable";
+  }
+  const dollars = `estimate $${estimate.usd.toFixed(3)}`;
+  return estimate.complete ? dollars : `${dollars} incomplete`;
+}
+
+export function formatRun(
+  meter: RunMeter,
+  prices: ReadonlyMap<
+    string,
+    { inputPerToken: number; outputPerToken: number }
+  >,
+): string {
+  const totals = meter.totals();
+  const estimate = formatEstimate(
+    meter.byModel.size === 0 ? undefined : estimateUsd(meter, prices),
+  );
+  return `${estimate} · in ${totals.promptTokens} out ${totals.completionTokens} reasoning ${totals.reasoningTokens}`;
+}
+
+export function completionRequestBody(
+  modelId: string,
+  messages: ChatMessage[],
+  options: CompleteOptions,
+): Record<string, unknown> {
+  return {
+    model: modelId,
+    temperature: options.temperature,
+    stream: true,
+    stream_options: { include_usage: true },
+    messages,
+    ...(options.maxTokens === undefined
+      ? {}
+      : { max_completion_tokens: options.maxTokens }),
+    ...reasoningEffortField(options.supportedParams, options.reasoningEffort),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,15 +176,56 @@ function finishReason(payload: unknown): string | undefined {
   return choice.finish_reason;
 }
 
+function usageNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function usageFromPayload(payload: unknown): TokenUsage | undefined {
+  if (!isRecord(payload) || !isRecord(payload.usage)) return undefined;
+  const usage = payload.usage;
+  const promptDetails = isRecord(usage.prompt_tokens_details)
+    ? usage.prompt_tokens_details
+    : undefined;
+  const completionDetails = isRecord(usage.completion_tokens_details)
+    ? usage.completion_tokens_details
+    : undefined;
+  return {
+    promptTokens: usageNumber(usage, "prompt_tokens"),
+    cachedTokens: promptDetails
+      ? usageNumber(promptDetails, "cached_tokens")
+      : 0,
+    completionTokens: usageNumber(usage, "completion_tokens"),
+    reasoningTokens: completionDetails
+      ? usageNumber(completionDetails, "reasoning_tokens")
+      : 0,
+  };
+}
+
 function snippet(body: string): string {
   return body.replace(/\s+/g, " ").slice(0, 180);
+}
+
+function recordUsage(
+  meter: RunMeter | undefined,
+  modelId: string,
+  usage: TokenUsage,
+  label: string,
+  elapsedMs: number,
+  reason: string,
+): void {
+  meter?.add(modelId, usage);
+  const finish = reason ? ` finish=${reason}` : "";
+  console.log(
+    `[${label}] ${modelId} ${elapsedMs}ms${finish} in=${usage.promptTokens} cached=${usage.cachedTokens} out=${usage.completionTokens} reasoning=${usage.reasoningTokens}`,
+  );
 }
 
 export async function streamChat(
   model: CompletionTarget,
   messages: ChatMessage[],
   options: CompleteOptions,
-): Promise<string> {
+): Promise<ChatResult> {
   if (!model.apiKey) {
     throw new Error(`${model.name} API key is not set`);
   }
@@ -76,15 +244,9 @@ export async function streamChat(
       "Content-Type": "application/json",
       Accept: "text/event-stream",
     },
-    body: JSON.stringify({
-      model: model.modelId,
-      temperature: options.temperature,
-      stream: true,
-      messages,
-      ...(options.maxTokens === undefined
-        ? {}
-        : { max_tokens: options.maxTokens }),
-    }),
+    body: JSON.stringify(
+      completionRequestBody(model.modelId, messages, options),
+    ),
     signal: AbortSignal.timeout(150_000),
   });
 
@@ -106,54 +268,60 @@ export async function streamChat(
     );
   }
 
-  const type = response.headers.get("content-type") ?? "";
-  if (type.includes("application/json")) {
-    const payload: unknown = await response.json();
-    const content = contentFromPayload(payload);
-    const reason = finishReason(payload);
-    console.log(
-      `[${options.label}] ${model.modelId} ${elapsed()}ms${
-        reason ? ` finish=${reason}` : ""
-      }`,
-    );
-    return content;
-  }
-
-  if (!response.body) {
-    throw new Error(`${options.label} returned an empty body`);
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
   let content = "";
   let reason = "";
+  let usage = { ...EMPTY_USAGE };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const data = trimmed.slice(5).trim();
-      if (data === "[DONE]") continue;
-      try {
-        const payload: unknown = JSON.parse(data);
-        content += contentFromPayload(payload);
-        reason = finishReason(payload) ?? reason;
-      } catch {
-        continue;
+  const take = (payload: unknown) => {
+    content += contentFromPayload(payload);
+    const nextReason = finishReason(payload);
+    if (nextReason) reason = nextReason;
+    const nextUsage = usageFromPayload(payload);
+    if (nextUsage) usage = nextUsage;
+  };
+
+  const type = response.headers.get("content-type") ?? "";
+  if (type.includes("application/json")) {
+    take(await response.json());
+  } else {
+    if (!response.body) {
+      throw new Error(`${options.label} returned an empty body`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === "[DONE]") continue;
+        try {
+          take(JSON.parse(data));
+        } catch {
+          continue;
+        }
       }
     }
   }
 
-  console.log(
-    `[${options.label}] ${model.modelId} ${elapsed()}ms${
-      reason ? ` finish=${reason}` : ""
-    }`,
+  recordUsage(
+    options.meter,
+    model.modelId,
+    usage,
+    options.label,
+    elapsed(),
+    reason,
   );
-  return content;
+  if (reason === "length") {
+    throw new CutOffReply(options.label, model.modelId, usage);
+  }
+  return { content, finishReason: reason || undefined, usage };
 }
+
+export type { ReasoningEffort };

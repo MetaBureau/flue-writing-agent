@@ -10,17 +10,32 @@ import {
   type Draft,
   draftUserPrompt,
   expansionTokenBudget,
+  extendShouldStop,
   extendToTarget,
   factualNotes,
   fitExtension,
   groundedInNote,
   mergeExtension,
+  OUTLINE_MAX_TOKENS,
   outlineUserPrompt,
   pickDraft,
   repeatsDraft,
   wordCountFromTopic,
   wordsToAsk,
 } from "../src/agents/write.ts";
+import {
+  catalogFromHub,
+  keyListWarning,
+  pickerLabel,
+  pickerModels,
+  reasoningEffortField,
+} from "../src/catalog.ts";
+import {
+  completionRequestBody,
+  estimateUsd,
+  RunMeter,
+  usageFromPayload,
+} from "../src/complete.ts";
 import {
   keepIfNotShortened,
   styleUserPrompt,
@@ -264,4 +279,106 @@ Deno.test("claim text drops page furniture and keeps the product sentence", () =
   assertStringIncludes(cleaned, "reranked snippets");
   assertFalse(cleaned.includes("views"));
   assertFalse(cleaned.includes("bootcamp"));
+});
+
+Deno.test("completion body caps reasoning tokens and records usage", () => {
+  const body = completionRequestBody("google/gemini-3.5-flash", [
+    { role: "user", content: "notes" },
+  ], {
+    temperature: 0.2,
+    label: "outline",
+    maxTokens: 4096,
+    reasoningEffort: "none",
+  });
+  assertEquals(body.max_completion_tokens, 4096);
+  assertEquals("max_tokens" in body, false);
+  assertEquals(body.stream_options, { include_usage: true });
+  assertEquals("reasoning_effort" in body, false);
+  assertEquals("user" in body, false);
+});
+
+Deno.test("reasoning effort is sent only for documented values the catalog lists", () => {
+  assertEquals(reasoningEffortField(["reasoning_effort"], "low"), {
+    reasoning_effort: "low",
+  });
+  assertEquals(reasoningEffortField(["reasoning_effort"], "none"), {});
+  assertEquals(reasoningEffortField(["temperature"], "low"), {});
+});
+
+Deno.test("usage parser reads reasoning tokens from the final chunk", () => {
+  assertEquals(
+    usageFromPayload({
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 40,
+        prompt_tokens_details: { cached_tokens: 4 },
+        completion_tokens_details: { reasoning_tokens: 30 },
+      },
+    }),
+    {
+      promptTokens: 10,
+      cachedTokens: 4,
+      completionTokens: 40,
+      reasoningTokens: 30,
+    },
+  );
+});
+
+Deno.test("estimate uses catalog prices and does not add reasoning twice", () => {
+  const meter = new RunMeter();
+  meter.add("google/gemini-3.5-flash", {
+    promptTokens: 19531,
+    cachedTokens: 0,
+    completionTokens: 53581,
+    reasoningTokens: 50992,
+  });
+  const prices = new Map([[
+    "google/gemini-3.5-flash",
+    { inputPerToken: 1.5e-6, outputPerToken: 9e-6 },
+  ]]);
+  const estimate = estimateUsd(meter, prices);
+  assertEquals(estimate.complete, true);
+  assertEquals(Number(estimate.usd.toFixed(3)), 0.512);
+});
+
+Deno.test("extend stops after three rejects or six calls", () => {
+  assertEquals(extendShouldStop(0, 2), false);
+  assertEquals(extendShouldStop(1, 3), true);
+  assertEquals(extendShouldStop(6, 0), true);
+});
+
+Deno.test("picker label uses catalog price and does not claim default reasoning", () => {
+  const catalog = catalogFromHub([{
+    model_group: "google/gemini-3.5-flash",
+    supports_reasoning: true,
+    supported_openai_params: ["reasoning_effort"],
+    output_cost_per_token: 9e-6,
+    input_cost_per_token: 1.5e-6,
+    mode: "chat",
+  }, {
+    model_group: "openai/gpt-4.1",
+    supports_reasoning: false,
+    output_cost_per_token: 8e-6,
+    input_cost_per_token: 2e-6,
+    mode: "chat",
+  }]);
+  assertEquals(
+    pickerLabel("Gemini 3.5 Flash", catalog.get("google/gemini-3.5-flash")),
+    "Gemini 3.5 Flash · can reason · $9/M out",
+  );
+  const curated = [
+    { id: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+    { id: "openai/gpt-4.1", label: "GPT-4.1" },
+  ];
+  const choices = pickerModels(curated, catalog, new Set(["openai/gpt-4.1"]));
+  assertEquals(choices.map((choice) => choice.id), ["openai/gpt-4.1"]);
+  assertEquals(
+    pickerModels(curated, catalog, new Set(["google/*"])).map((choice) =>
+      choice.id
+    ),
+    [],
+  );
+  assertEquals(keyListWarning(curated, new Set(["google/*"])).length > 0, true);
+  assertEquals(keyListWarning(curated, undefined), "");
+  assertEquals(OUTLINE_MAX_TOKENS, 4096);
 });

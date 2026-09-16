@@ -1,4 +1,9 @@
-import { type CompletionTarget, streamChat } from "../complete.ts";
+import {
+  type CompletionTarget,
+  CutOffReply,
+  type RunMeter,
+  streamChat,
+} from "../complete.ts";
 
 export type SourceNotes = { readonly text: string; readonly topic?: string };
 export type EditorialStyle =
@@ -34,7 +39,10 @@ export interface Draft {
 
 export const DEFAULT_WORD_COUNT = 900;
 export const MAX_EXTENSIONS = 6;
+export const MAX_EXTEND_CALLS = 6;
+export const MAX_CONSECUTIVE_REJECTS = 3;
 export const EXTENSION_ASK_RATIO = 1.5;
+export const OUTLINE_MAX_TOKENS = 4096;
 export const DRAFT_MAX_TOKENS = 4096;
 
 export function countWords(text: string): number {
@@ -114,6 +122,14 @@ export function repeatsDraft(draft: string, extra: string): boolean {
   const extraWords = contentWords(extra);
   if (extraWords.length < 8) return false;
   return extraWords.filter((word) => !known.has(word)).length < 4;
+}
+
+export function extendShouldStop(
+  calls: number,
+  consecutiveRejects: number,
+): boolean {
+  return consecutiveRejects >= MAX_CONSECUTIVE_REJECTS ||
+    calls >= MAX_EXTEND_CALLS;
 }
 
 export function acceptExpansion(
@@ -273,6 +289,7 @@ export const generateOutline = async (
   _ctx: unknown,
   notes: SourceNotes,
   model: ModelConfig,
+  meter?: RunMeter,
 ): Promise<Outline> => {
   const topic = notes.topic ?? notes.text;
   const words = wordCountFromTopic(topic);
@@ -281,10 +298,15 @@ export const generateOutline = async (
     return FALLBACK_OUTLINE(topic);
   }
 
-  const content = await streamChat(model, [
+  const content = (await streamChat(model, [
     { role: "system", content: OUTLINE_SYSTEM },
     { role: "user", content: outlineUserPrompt(notes.text, words) },
-  ], { temperature: 0.2, label: "outline" });
+  ], {
+    temperature: 0.2,
+    label: "outline",
+    maxTokens: OUTLINE_MAX_TOKENS,
+    meter,
+  })).content;
 
   const outline = parseOutline(content, topic);
   outline.wordCountTarget = words;
@@ -296,6 +318,7 @@ export const generateDrafts = async (
   outline: Outline,
   model: ModelConfig,
   notes: SourceNotes,
+  meter?: RunMeter,
 ): Promise<Draft[]> => {
   if (!model.apiKey) {
     console.warn(`${model.name} key not set, using stub drafts`);
@@ -323,7 +346,7 @@ export const generateDrafts = async (
 
   const drafts: Draft[] = [];
   for (const { name, instruction } of styles) {
-    const content = await streamChat(model, [
+    const content = (await streamChat(model, [
       { role: "system", content: DRAFT_SYSTEM },
       {
         role: "user",
@@ -333,7 +356,8 @@ export const generateDrafts = async (
       temperature: 0.3,
       label: `draft:${name}`,
       maxTokens: DRAFT_MAX_TOKENS,
-    });
+      meter,
+    })).content;
     drafts.push({
       style: name,
       content: content || "Draft content placeholder",
@@ -354,6 +378,7 @@ export async function extendDraft(
   target: number,
   model: ModelConfig,
   label: string,
+  meter?: RunMeter,
 ): Promise<string> {
   let text = draft.trim();
   let words = countWords(text);
@@ -362,22 +387,40 @@ export async function extendDraft(
   const paragraphs = factualNotes(notes);
   if (paragraphs.length === 0) return text;
   let round = 0;
-  while (words < target && round < 3) {
+  let calls = 0;
+  let consecutiveRejects = 0;
+  while (
+    words < target && round < 3 && !extendShouldStop(calls, consecutiveRejects)
+  ) {
     round += 1;
     const remaining = paragraphs.length;
     const each = Math.max(40, Math.ceil((target - words) / remaining));
     for (let index = 0; index < paragraphs.length && words < target; index++) {
+      if (extendShouldStop(calls, consecutiveRejects)) break;
+      calls += 1;
       const note = paragraphs[index];
-      const extra = await streamChat(model, [
-        { role: "system", content: DRAFT_SYSTEM },
-        { role: "user", content: expansionUserPrompt(note, each, text) },
-      ], {
-        temperature: 0.7,
-        label: `${label}:expand:${round}:${index + 1}`,
-        maxTokens: expansionTokenBudget(each),
-      });
+      let extra = "";
+      try {
+        extra = (await streamChat(model, [
+          { role: "system", content: DRAFT_SYSTEM },
+          { role: "user", content: expansionUserPrompt(note, each, text) },
+        ], {
+          temperature: 0.7,
+          label: `${label}:expand:${round}:${index + 1}`,
+          maxTokens: expansionTokenBudget(each),
+          meter,
+        })).content;
+      } catch (error) {
+        if (!(error instanceof CutOffReply)) throw error;
+        consecutiveRejects += 1;
+        console.log(
+          `[${label}:expand:${round}:${index + 1}] discarded cut-off reply`,
+        );
+        continue;
+      }
       const fitted = fitExtension(extra, each);
       if (!acceptExpansion(note, fitted, each, text)) {
+        consecutiveRejects += 1;
         console.log(
           `[${label}:expand:${round}:${index + 1}] rejected raw=${
             countWords(extra)
@@ -385,6 +428,7 @@ export async function extendDraft(
         );
         continue;
       }
+      consecutiveRejects = 0;
       const merged = mergeExtension(text, fitted);
       const next = countWords(merged);
       if (next <= words) continue;

@@ -14,7 +14,8 @@ Fresh screens for the writing test: topic, style, provider, model, then the save
 ## Local Contracts
 
 - Styles are `STYLE_NAMES` from `src/skills/styles.ts`
-- Providers are the keys of `PROVIDERS`; models are each provider's `models`
+- Providers are the keys of `PROVIDERS`. Picker ids stay in each provider's `models`. HaiMaker labels, prices, and the reasoning flag come from the model hub when that fetch succeeds
+- If the HaiMaker key's model list shares no picker id, the picker is empty and the form shows a warning. Do not show the curated list in that case
 - A model not in the chosen provider's `models` is HTTP 400 JSON `{ error }`
 - A missing topic or unknown style is HTTP 400 JSON `{ error }`
 - A write streams `text/event-stream`: stage events, then `{ type: "essay", markdown }`, or `{ type: "error" }`

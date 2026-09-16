@@ -1,7 +1,7 @@
 # RFC 0001: Align writing stages with an AI-era publishing workflow
 
-- Status: Draft
-- Date: 2026-09-17 (updated 2026-09-17: pet-cat findings, Phase 0 based on the HaiMaker docs, and peer review changes)
+- Status: Draft. Phase 0 is implemented except the actual-cost half of item 5.
+- Date: 2026-09-17 (updated 2026-09-17: pet-cat findings, Phase 0 based on the HaiMaker docs, peer review, then the Phase 0 implementation)
 - Author: Stew Milne
 - Scope: `src/workflow.ts`, `src/main.ts`, `src/complete.ts`, `src/providers.ts`, `src/notes.ts`, `src/agents/write.ts`, `src/agents/writer.ts`, `src/skills/`, `src/contract.ts`, `islands/WriteForm.tsx`
 
@@ -17,7 +17,7 @@ This RFC maps each stage to a traditional publishing workflow and records that e
 
 `research → outline → drafts (3 tones) → pickDraft → style → extend → save`
 
-The form and the CLI run the same stages. One provider and model (chosen in the form or with `--model`) runs every stage. `streamChat` sends no reasoning setting, accepts any `finish_reason`, and records no token usage or cost.
+The form and the CLI run the same stages. One provider and model (chosen in the form or with `--model`) runs every stage. Before Phase 0, `streamChat` sent no reasoning setting, accepted any `finish_reason`, and recorded no token usage or cost.
 
 ## Gap analysis
 
@@ -100,7 +100,7 @@ The HaiMaker docs only document `low`, `medium`, and `high`. `none` and `minimal
 
 What it shows:
 
-- **`supports_reasoning: true` means a model *can* reason, not that it reasons by default.** Gemini 3.5 Flash, DeepSeek V4 Flash, and Kimi K2.6 reason when the parameter is left out.
+- **`supports_reasoning: true` means a model *can* reason, not that it reasons by default.** Gemini 3.5 Flash, DeepSeek V4 Flash, and Kimi K2.6 reason when the parameter is left out. That default is not a catalog field. The picker says "can reason" and does not use this table.
 - **The documented `low` still reasons** on Gemini 3.5 Flash (1,711 tokens). Documented `reasoning_effort` levels cannot switch reasoning off.
 - **Streamed usage reports `completion_tokens_details.reasoning_tokens`**, as the HaiMaker prompt-caching page documents, but it has no cost field.
 
@@ -201,19 +201,22 @@ Items 1–7 do not depend on moving notes into the system message. What each ite
 - **Items 3 and 4 stop the call blow-up.** The 11 extend calls come from looping every note paragraph for up to 3 rounds (`src/agents/write.ts:308`).
 - **Item 7 is only a ceiling on the key**, not a limit per run.
 
-1. **Reject cut-off replies.** Send `max_completion_tokens` (the cap that includes reasoning) instead of `max_tokens`. Treat `finish_reason: "length"` as a failure: extend and style discard the reply, and outline and drafts surface an error. Do not treat `content` as safe copy on its own; the Phase 1 prose checks still apply.
-2. **Read the catalog, not a hard-coded list.** Load `/public/model_hub` for prices, `supports_reasoning`, `supported_openai_params`, and `max_output_tokens`, and intersect it with `/v1/models` for the key. Keep a short curated list of ids for the picker; the labels, prices, and reasoning flag come from the catalog.
+1. **Reject cut-off replies.** Send `max_completion_tokens` (the cap that includes reasoning) instead of `max_tokens`. Treat `finish_reason: "length"` as a failure: extend and style discard the reply, and outline and drafts surface an error. Do not treat `content` as safe copy on its own; the Phase 1 prose checks still apply. Outline sends the same cap as drafts and style (`OUTLINE_MAX_TOKENS`, 4096). Without a cap, a model that reasons by default can run with no bound, and a cut-off cannot be detected.
+2. **Read the catalog, not a hard-coded list.** Load `/public/model_hub` for prices, `supports_reasoning`, `supported_openai_params`, and `max_output_tokens`, and intersect it with `/v1/models` for the key. Keep a short curated list of ids for the picker; the labels, prices, and reasoning flag come from the catalog. If the key list shares no picker id, show an empty picker and a warning. Do not fall back to the curated list.
+   - Checked 2026-09-17 on the writer key: `GET /v1/models` returned an OpenAI list (`data[].id`, `object`, `created`, `owned_by`). 458 of 459 ids contained `/`. All eight picker ids were present as `provider/model`, the same form as catalog `model_group`. The list also includes wildcards (`*`, `xai/*`). Exact match is valid. An empty intersection is an allowlist miss, not a format mismatch.
 3. **Control reasoning only through documented parameters.** Send `reasoning_effort` only when the catalog lists it in `supported_openai_params`, and only with documented values. For no reasoning, prefer models that do not reason by default.
 4. **Bound extend's calls.** Stop after 3 consecutive rejected expansions, and cap the total extend calls per run.
 5. **Record usage and cost per run.** Request `stream_options.include_usage`, and log prompt, cached, output, and reasoning tokens per stage. Show an **estimate** during the run, from catalog prices. For the **actual** cost, set the documented Chat Completions `user` field to a run id on every call, then sum the `/spend/logs/v2` rows carrying that id for the run's dates. Label the two as estimate and actual.
    - `/key/info` before-and-after and time windows are rejected: both mix runs that overlap.
    - The docs name `user` ("a unique identifier representing your end-user"), but the public docs do not say which spend-log field records it. The live auto-router page documents `/spend/logs/v2` with only `start_date`, `end_date`, `page`, and `page_size`. A spend-tracking page outside the public doc set (`/docs/proxy/cost_tracking`, now 404) said the request `user` is stored as spend-log `end_user`, and that the log's `user` is the key owner. It also showed a `/spend/logs/v2?end_user=` filter. Neither is a contract: make one tagged call and look for the run id in `end_user`, not `user`, before relying on it. Until then, ship the estimate only.
-6. **Label the picker** with catalog data, e.g. "Gemini 3.5 Flash · reasons by default · $9/M out".
+6. **Label the picker** with catalog data, e.g. "Gemini 3.5 Flash · can reason · $9/M out". Do not label "reasons by default". That behavior is trial evidence in the table above, not a catalog field.
 7. **Set a key ceiling.** Use a dedicated service account key for the writer, with `max_budget` + `budget_duration`, a `soft_budget` alert, and a `models` allowlist matching the picker. Optionally set `model_max_budget` for expensive models. Document the setup in `.env.example` and `README.md`.
 8. **Fix repo docs that contradict the docs or the code.**
    - `README.md` provider section: `FAST_MODEL_ID=haimaker/auto` with `FAST_MODEL_KEY`. The code reads `HAIMAKER_API_KEY`, and `haimaker/auto` errors without a router.
    - Replace `HAIMAKER.md`, which predates the integration.
    - Update the root rule "Fast model drafts; reasoning model outlines" (`AGENTS.md:89`): one chosen model now runs every stage.
+
+Known gap, not fixed in Phase 0: `src/agents/writer.ts` does not call `streamChat`. The form and CLI do not use it. It registers models through pi-ai with `maxTokens`, every cost at zero, and `reasoning: false`. Cut-off rejection, the usage meter, and catalog prices do not apply on that path.
 
 ### Phase 1: cheap quality fixes, no new stages (approved 2026-09-17, except items 7–9)
 

@@ -6,7 +6,7 @@ Deterministic checks for pipeline helpers and prompt contracts. No live model or
 
 ## Ownership
 
-`pipeline_test.ts` is the current suite. It imports `src/main.ts`, `src/agents/write.ts`, `src/skills/editorial.ts`, and `src/research.ts`.
+`pipeline_test.ts` is the current suite. It imports `src/main.ts`, `src/agents/write.ts`, `src/skills/editorial.ts`, `src/research.ts`, `src/complete.ts`, and `src/catalog.ts`.
 
 ## Local Contracts
 

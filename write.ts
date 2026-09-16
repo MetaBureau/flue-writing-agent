@@ -7,7 +7,7 @@ if (!apiKey) {
 }
 
 const topic = Deno.args[0] || "Mercury 2.5: 1107 tokens/s, diffusion LLM";
-const content = await streamChat({
+const content = (await streamChat({
   name: "HaiMaker",
   apiKey,
   baseUrl: "https://api.haimaker.ai/v1",
@@ -19,7 +19,7 @@ const content = await streamChat({
       "You are an expert technical writer. Write in the Economist style: direct, active voice, omits needless words.",
   },
   { role: "user", content: `Write a blog post about: ${topic}` },
-], { temperature: 0.7, label: "write" });
+], { temperature: 0.7, label: "write" })).content;
 
 await Deno.writeTextFile(
   "Mercury2.5_economist.md",

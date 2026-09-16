@@ -5,6 +5,8 @@ import {
   pickDraft,
 } from "./agents/write.ts";
 import type { EditorialStyle } from "./agents/write.ts";
+import { loadPrices } from "./catalog.ts";
+import { formatRun, RunMeter } from "./complete.ts";
 import { type StageId, type WriteEvent } from "./contract.ts";
 import { topicSlug } from "./main.ts";
 import { gatherResearch } from "./research.ts";
@@ -29,6 +31,9 @@ export async function* writeStages(input: {
   const fast = resolveProvider(providerName, "fast", input.model);
   const reasoning = resolveProvider(providerName, "reasoning", input.model);
   const keyProblem = providerKeyProblem(providerName);
+  const prices = await loadPrices();
+  const meter = new RunMeter();
+  const cost = () => formatRun(meter, prices);
   if (keyProblem) {
     yield { type: "stage", id: "outline", status: "error", detail: keyProblem };
     yield { type: "error", stage: "outline", error: keyProblem };
@@ -62,12 +67,12 @@ export async function* writeStages(input: {
       status: "active",
       detail: `${reasoning.name} · ${reasoning.modelId}`,
     };
-    const outline = await generateOutline({}, notes, reasoning);
+    const outline = await generateOutline({}, notes, reasoning, meter);
     yield {
       type: "stage",
       id: "outline",
       status: "done",
-      detail: outline.title,
+      detail: `${outline.title} · ${cost()}`,
     };
 
     stage = "drafts";
@@ -77,13 +82,13 @@ export async function* writeStages(input: {
       status: "active",
       detail: `${fast.name} · ${fast.modelId}`,
     };
-    const drafts = await generateDrafts({}, outline, fast, notes);
+    const drafts = await generateDrafts({}, outline, fast, notes, meter);
     const selected = pickDraft(drafts, input.style);
     yield {
       type: "stage",
       id: "drafts",
       status: "done",
-      detail: selected.style,
+      detail: `${selected.style} · ${cost()}`,
     };
 
     stage = "style";
@@ -93,8 +98,9 @@ export async function* writeStages(input: {
       input.style,
       fast,
       outline.wordCountTarget,
+      meter,
     );
-    yield { type: "stage", id: "style", status: "done" };
+    yield { type: "stage", id: "style", status: "done", detail: cost() };
 
     stage = "extend";
     yield { type: "stage", id: "extend", status: "active" };
@@ -104,8 +110,9 @@ export async function* writeStages(input: {
       outline.wordCountTarget,
       fast,
       `style:${input.style}`,
+      meter,
     );
-    yield { type: "stage", id: "extend", status: "done" };
+    yield { type: "stage", id: "extend", status: "done", detail: cost() };
 
     const markdown =
       `# ${outline.title}\n\n## Style: ${input.style}\n\n---\n\n${content}`;
@@ -119,7 +126,8 @@ export async function* writeStages(input: {
     const message = error instanceof Error
       ? error.message
       : "The writer failed.";
-    yield { type: "stage", id: stage, status: "error", detail: message };
-    yield { type: "error", stage, error: message };
+    const detail = `${message} · ${cost()}`;
+    yield { type: "stage", id: stage, status: "error", detail };
+    yield { type: "error", stage, error: detail };
   }
 }

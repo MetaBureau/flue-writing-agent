@@ -10,7 +10,7 @@ Flue writing agent, plus the older notes-only draft script.
 
 ## Ownership
 
-- `writer.ts` registers Mercury (`FAST_MODEL_KEY`) and HaiMaker (`HAIMAKER_API_KEY`). The form's `provider` chooses the model.
+- `writer.ts` registers Mercury (`FAST_MODEL_KEY`) and HaiMaker (`HAIMAKER_API_KEY`). The form does not call it. Those model rows set cost to zero and `reasoning: false`, and they do not go through `streamChat`.
 - `run.ts` can boot Flue in Deno. The form does not use it.
 - `write.ts` owns outline/draft/extend prompts, word-count helpers, expansion acceptance, and model calls through `streamChat`. The form workflow calls these stages.
 
@@ -18,9 +18,11 @@ Flue writing agent, plus the older notes-only draft script.
 
 - `wordCountFromTopic` defaults to 900 unless the topic contains `N words`
 - Outline JSON: `{title, sections, wordCountTarget}`; at most four sections; sections must name material already in the notes; no invented intro/conclusion/roadmap and no split of one claim into several headings
+- Outline sends `max_completion_tokens` (`OUTLINE_MAX_TOKENS`, 4096), the same cap as drafts and style
 - Draft voices: conversational, professional, analytical. `VOICE_FOR_STYLE` maps economist and strunk-white to analytical, monocle to conversational, professional to professional
 - Drafts cover every note, say each fact once, and stop when notes are covered; no closing paragraph
 - `extendDraft` unpacks factual note paragraphs (`>= 15` words) one at a time; `acceptExpansion` requires overlap with the source note, rejects off-topic text, and rejects an expansion that repeats the draft (`repeatsDraft`)
+- Extend stops after 3 consecutive rejects or 6 calls (`MAX_CONSECUTIVE_REJECTS`, `MAX_EXTEND_CALLS`). A cut-off reply counts as a reject and is not copied
 - Missing API key: heuristic outline and stub drafts, no network
 
 ## Work Guidance
