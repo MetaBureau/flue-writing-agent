@@ -101,6 +101,7 @@ Deno Fresh UI plus a Flue agent. `deno task dev` serves the form on port 5175. T
 
 ## Child DOX Index
 
+- `docs/AGENTS.md` — RFCs for workflow design
 - `routes/AGENTS.md` — Fresh page and `/api/write`
 - `src/AGENTS.md` — CLI entry, providers, streaming completion, Tavily research
 - `tests/AGENTS.md` — Deno tests for prompts, notes grounding, and research parsing
