@@ -1,0 +1,13 @@
+{
+  "name": "flue-writing-agent",
+  "version": "0.1.0",
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["ESNext", "DOM"]
+  },
+  "tasks": {
+    "start": "deno run --allow-net --allow-read --allow-write --allow-env src/main.ts",
+    "dev": "deno run --watch --allow-net --allow-read --allow-write --allow-env src/main.ts",
+    "test": "deno test --allow-read --allow-write tests/"
+  }
+}
