@@ -10,7 +10,13 @@ import {
   stripLeadingTitle,
 } from "./agents/write.ts";
 import type { EditorialStyle } from "./agents/write.ts";
-import { loadPrices } from "./catalog.ts";
+import { loadModelHub, pricesFromCatalog } from "./catalog.ts";
+import {
+  checkClaims,
+  citableHits,
+  factcheckRecord,
+  resolveChecker,
+} from "./factcheck.ts";
 import { formatRun, RunMeter } from "./complete.ts";
 import { type StageId, type WriteEvent } from "./contract.ts";
 import { topicSlug, writeOutputFile } from "./main.ts";
@@ -28,6 +34,7 @@ export async function* writeStages(input: {
   style: EditorialStyle;
   provider?: string;
   model?: string;
+  checkModel?: string;
 }): AsyncGenerator<WriteEvent, void> {
   await reloadEnv();
   const providerName = input.provider && input.provider in PROVIDERS
@@ -36,7 +43,8 @@ export async function* writeStages(input: {
   const fast = resolveProvider(providerName, "fast", input.model);
   const reasoning = resolveProvider(providerName, "reasoning", input.model);
   const keyProblem = providerKeyProblem(providerName);
-  const prices = await loadPrices();
+  const catalog = await loadModelHub().catch(() => new Map());
+  const prices = pricesFromCatalog(catalog);
   const meter = new RunMeter();
   const cost = () => formatRun(meter, prices);
   if (keyProblem) {
@@ -74,7 +82,13 @@ export async function* writeStages(input: {
       status: "active",
       detail: `${reasoning.name} · ${reasoning.modelId}`,
     };
-    const outline = await generateOutline({}, notes, reasoning, meter);
+    const outline = await generateOutline(
+      {},
+      notes,
+      reasoning,
+      meter,
+      catalog.get(reasoning.modelId)?.supportedParams,
+    );
     yield {
       type: "stage",
       id: "outline",
@@ -120,10 +134,29 @@ export async function* writeStages(input: {
       outline.wordCountTarget,
       meter,
       countWords(extended) > countWords(draft) ? countWords(draft) : 0,
+      notes.text,
     );
     yield { type: "stage", id: "style", status: "done", detail: cost() };
 
-    const markdown = essayMarkdown(outline.title, content);
+    stage = "factcheck";
+    yield { type: "stage", id: "factcheck", status: "active" };
+    const hits = citableHits(research.hits);
+    const checker = resolveChecker(fast.modelId, input.checkModel);
+    const checked = await checkClaims(
+      content,
+      hits,
+      checker,
+      notes.text,
+      meter,
+    );
+    yield {
+      type: "stage",
+      id: "factcheck",
+      status: "done",
+      detail: `${checked.detail} · ${checker.modelId} · ${cost()}`,
+    };
+
+    const markdown = essayMarkdown(outline.title, checked.text);
     const slug = topicSlug(outline.title || input.topic);
     await writeOutputFile(`output/${slug}.md`, markdown);
     await writeOutputFile(
@@ -133,6 +166,7 @@ export async function* writeStages(input: {
         outlineModel: reasoning.modelId ?? reasoning.name,
         draftModel: fast.modelId ?? fast.name,
         cost: cost(),
+        factcheck: factcheckRecord(checked),
       }),
     );
     yield { type: "essay", markdown };

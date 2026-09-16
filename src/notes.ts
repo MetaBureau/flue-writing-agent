@@ -116,11 +116,14 @@ export function selectHits(query: string, hits: SearchHit[]): SearchHit[] {
   );
 }
 
-export async function gatherResearch(
-  topic: string,
-): Promise<{ text: string; count: number; query: string }> {
+export async function gatherResearch(topic: string): Promise<{
+  text: string;
+  count: number;
+  query: string;
+  hits: SearchHit[];
+}> {
   const query = searchQuery(topic);
-  if (!query) return { text: "", count: 0, query };
+  if (!query) return { text: "", count: 0, query, hits: [] };
   const key = envGet("TAVILY_API_KEY");
   try {
     const response = await fetch(TAVILY_SEARCH_URL, {
@@ -144,13 +147,13 @@ export async function gatherResearch(
     });
     if (!response.ok) {
       console.log(`Research: none (HTTP ${response.status})`);
-      return { text: "", count: 0, query };
+      return { text: "", count: 0, query, hits: [] };
     }
     const hits = selectHits(query, hitsFromPayload(await response.json()));
-    return { text: sourceNotes(hits), count: hits.length, query };
+    return { text: sourceNotes(hits), count: hits.length, query, hits };
   } catch (error) {
     const message = error instanceof Error ? error.message : "request failed";
     console.log(`Research: none (${message})`);
-    return { text: "", count: 0, query };
+    return { text: "", count: 0, query, hits: [] };
   }
 }

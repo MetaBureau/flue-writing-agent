@@ -77,7 +77,7 @@ Default section order:
 
 ## This Project
 
-Deno Fresh UI plus a Flue agent. `deno task dev` serves the form on port 5175. The form posts topic, style, provider, and model to `/api/write`. That route streams stage events and then the essay markdown for the page.
+Deno Fresh UI plus a Flue agent. `deno task dev` serves the form on port 5175. The form posts topic, style, provider, model, and checker model to `/api/write`. That route streams stage events and then the essay markdown for the page.
 
 - UI: `deno task dev` on port 5175. Keep that port.
 - `deno.json` sets `"workspace": []` so Fresh boots here without joining the parent MetaBureau workspace. Do not remove that field.
@@ -86,7 +86,7 @@ Deno Fresh UI plus a Flue agent. `deno task dev` serves the form on port 5175. T
 - CLI entry: `src/main.ts` via `deno task start "<topic>"`
 - Stack: Deno, OpenAI-compatible `/chat/completions`, optional Tavily
 - Length defaults to 900 words; a count in the topic (`200 words`) overrides
-- When the form or `--model` sets a model, that model runs every stage. Without that override, fast and reasoning env vars can still differ
+- When the form or `--model` sets a model, that model runs the writing stages. Fact-check uses a separate HaiMaker model (`CHECK_MODEL`, default `openai/gpt-4.1`). Without a writer override, fast and reasoning env vars can still differ
 - Do not invent facts, sections, praise, predictions, or closings the notes do not contain
 - `output/` is generated; do not hand-edit it as source
 - Root `write.ts` is a HaiMaker scratch script; the product writer is `src/agents/write.ts`

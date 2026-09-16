@@ -7,6 +7,7 @@ import {
   pickerModels,
 } from "../src/catalog.ts";
 import { STYLE_NAMES } from "../src/skills/styles.ts";
+import { DEFAULT_CHECK_MODEL } from "../src/factcheck.ts";
 import {
   providerKeyProblem,
   PROVIDERS,
@@ -51,6 +52,8 @@ export default define.page(async function Home() {
         styles={[...STYLE_NAMES]}
         providers={Object.keys(PROVIDERS)}
         models={models}
+        checkModels={haimaker.models}
+        defaultCheckModel={DEFAULT_CHECK_MODEL}
         providerProblems={{
           haimaker: providerKeyProblem("haimaker") ?? haimaker.warning,
           mercury: providerKeyProblem("mercury") ?? "",

@@ -10,6 +10,7 @@ export interface CompletionTarget {
 export interface ChatMessage {
   role: "system" | "user";
   content: string;
+  cachedPrefix?: string;
 }
 
 export interface TokenUsage {
@@ -31,6 +32,7 @@ export interface CompleteOptions {
   maxTokens?: number;
   reasoningEffort?: string;
   supportedParams?: readonly string[];
+  responseFormat?: Record<string, unknown>;
   meter?: RunMeter;
 }
 
@@ -122,7 +124,39 @@ export function formatRun(
   const estimate = formatEstimate(
     meter.byModel.size === 0 ? undefined : estimateUsd(meter, prices),
   );
-  return `${estimate} · in ${totals.promptTokens} out ${totals.completionTokens} reasoning ${totals.reasoningTokens}`;
+  return `${estimate} · in ${totals.promptTokens} cached ${totals.cachedTokens} out ${totals.completionTokens} reasoning ${totals.reasoningTokens}`;
+}
+
+export function responseFormatField(
+  supportedParams: readonly string[] | undefined,
+  format: Record<string, unknown> | undefined,
+): { response_format: Record<string, unknown> } | Record<string, never> {
+  if (!format || !supportedParams?.includes("response_format")) return {};
+  return { response_format: format };
+}
+
+export function cacheSystemMessages(
+  modelId: string,
+  messages: ChatMessage[],
+): Array<{ role: "system" | "user"; content: unknown }> {
+  return messages.map((message) => {
+    const rest = message.content.startsWith(message.cachedPrefix ?? "\0")
+      ? message.content.slice(message.cachedPrefix?.length ?? 0).replace(/^\n+/, "")
+      : message.content;
+    if (
+      !modelId.startsWith("anthropic/") || message.role !== "system" ||
+      !message.cachedPrefix
+    ) {
+      return { role: message.role, content: message.content };
+    }
+    const blocks: Array<Record<string, unknown>> = [{
+      type: "text",
+      text: message.cachedPrefix,
+      cache_control: { type: "ephemeral" },
+    }];
+    if (rest) blocks.push({ type: "text", text: rest });
+    return { role: "system", content: blocks };
+  });
 }
 
 export function completionRequestBody(
@@ -135,11 +169,12 @@ export function completionRequestBody(
     temperature: options.temperature,
     stream: true,
     stream_options: { include_usage: true },
-    messages,
+    messages: cacheSystemMessages(modelId, messages),
     ...(options.maxTokens === undefined
       ? {}
       : { max_completion_tokens: options.maxTokens }),
     ...reasoningEffortField(options.supportedParams, options.reasoningEffort),
+    ...responseFormatField(options.supportedParams, options.responseFormat),
   };
 }
 

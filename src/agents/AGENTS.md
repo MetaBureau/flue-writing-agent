@@ -18,7 +18,8 @@ Flue writing agent, plus the older notes-only draft script.
 
 - `wordCountFromTopic` defaults to 900 unless the topic contains `N words`
 - Outline JSON: `{title, sections, wordCountTarget}`; at most four sections; sections must name material already in the notes; no invented intro/conclusion/roadmap and no split of one claim into several headings
-- Outline sends `max_completion_tokens` (`OUTLINE_MAX_TOKENS`, 4096), the same cap as drafts and style
+- Outline sends `max_completion_tokens` (`OUTLINE_MAX_TOKENS`, 4096), the same cap as drafts and style. Notes are in the system message, and that notes prefix is the cache block. The user message is the stage instruction
+- Outline may send `response_format` `json_schema` when the catalog lists `response_format`. Free-text JSON parsing remains the fallback
 - Draft voices: conversational, professional, analytical. `VOICE_FOR_STYLE` maps economist and strunk-white to analytical, monocle to conversational, professional to professional
 - Drafts cover every note, say each fact once, and stop when notes are covered; no closing paragraph
 - `draftingNotes` drops paragraphs that describe the source page (`students can use`, `contains N words`) before the outline. Source titles and URLs stay. Outline, drafts, extend, and the notes file all use that text

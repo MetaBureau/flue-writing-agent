@@ -6,14 +6,14 @@ Client form for a writing test. It does not call models itself.
 
 ## Ownership
 
-`WriteForm.tsx` owns the topic, style, provider, and model fields, the stage widget, and the essay display.
+`WriteForm.tsx` owns the topic, style, provider, writer model, and checker fields, the stage widget, and the essay display.
 
 ## Local Contracts
 
 - Read the event stream from `/api/write`
 - Mark each `WRITE_STAGES` entry active, done, or error
 - Show `error` in an alert. Show `markdown` from the essay event on the page.
-- Style, provider, and model options come from the route, not a second catalog
+- Style, provider, writer model, and checker options come from the route, not a second catalog. The checker list is the HaiMaker picker, defaulting to `openai/gpt-4.1`
 - Changing provider resets the model to that provider's first model
 
 ## Work Guidance

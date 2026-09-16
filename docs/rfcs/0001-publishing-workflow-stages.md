@@ -1,6 +1,6 @@
 # RFC 0001: Align writing stages with an AI-era publishing workflow
 
-- Status: Draft. Phase 0 is implemented except the actual-cost half of item 5. Phase 1 items 1–6 are implemented. Items 7–9 are not approved.
+- Status: Draft. Phase 0 is implemented except the actual-cost half of item 5. Phase 1 items 1–6 are implemented. Items 7–9 are not approved. Phase 2 items 1–3, 6, and 7 are implemented. Items 4, 5, and 8 are not.
 - Date: 2026-09-17 (updated 2026-09-17: pet-cat findings, Phase 0, peer review, then Phase 1 items 1–6)
 - Author: Stew Milne
 - Scope: `src/workflow.ts`, `src/main.ts`, `src/complete.ts`, `src/providers.ts`, `src/notes.ts`, `src/agents/write.ts`, `src/agents/writer.ts`, `src/skills/`, `src/contract.ts`, `islands/WriteForm.tsx`
@@ -15,9 +15,9 @@ This RFC maps each stage to a traditional publishing workflow and records that e
 
 ## Current pipeline
 
-Before Phase 1 the order was `research → outline → drafts (3 tones) → pickDraft → style → extend → save`. Phase 1 runs extend before style: `research → outline → drafts (3 tones) → pickDraft → extend → style → save`.
+Before Phase 1 the order was `research → outline → drafts (3 tones) → pickDraft → style → extend → save`. Phase 1 runs extend before style. Phase 2 adds fact-check after style: `research → outline → drafts (3 tones) → pickDraft → extend → style → factcheck → save`.
 
-The form and the CLI run the same stages. One provider and model (chosen in the form or with `--model`) runs every stage. Before Phase 0, `streamChat` sent no reasoning setting, accepted any `finish_reason`, and recorded no token usage or cost.
+The form and the CLI run the same stages. One provider and model (chosen in the form or with `--model`) runs the writing stages. Fact-check uses a separate HaiMaker model. Before Phase 0, `streamChat` sent no reasoning setting, accepted any `finish_reason`, and recorded no token usage or cost.
 
 ## Gap analysis
 
@@ -245,6 +245,10 @@ Items 1–6 are in the form and CLI. The Flue `Writer` agent now omits `## Style
 7. Order prompts so the notes are a shared prefix, for prompt caching. Add `cache_control` for Anthropic models, and report `cached_tokens`.
 8. Test native reasoning controls: Gemini `thinkingConfig` through `/v1beta/models/{model}:generateContent` (the HaiMaker page does not mention `thinkingConfig`), and Anthropic `thinking` through `/v1/messages`.
 
+Items 1–3, 6, and 7 are in the form and CLI. Unsupported claims are listed in the notes file, not cut and not written into the essay, because a first-hand topic fact has no URL. Claims the checker does not return are listed as unchecked there too. Supported claims get an inline markdown link, and cited sources are listed under `## Sources`. An invented URL is not linked. The checker is a HaiMaker model (`CHECK_MODEL`, default `openai/gpt-4.1`, or the form's second picker), not the writer's reasoning slot. If that id matches the writer, the other curated HaiMaker id is used. Item 4 as written (`haimaker/auto`) is still not done.
+
+Fact-check runs after style so the style pass cannot rewrite the links away. `response_format` `json_schema` is sent for the outline only when the catalog lists `response_format`. Notes sit at the start of the system message. Anthropic calls set `cache_control` on that notes block only, not on the instruction or draft. `haimaker/auto` and a repo-managed router are not applied: that writes to the live key, and the target models and capture flags are still open. Item 8 is a paid test and was not run.
+
 ### Phase 3: brief, packaging, approval
 
 1. A brief: angle, audience, purpose and length, with the word count taken from the brief rather than the topic text. Include first-hand material the web cannot supply ("my pet cat").
@@ -268,8 +272,8 @@ Items 1–6 are in the form and CLI. The Flue `Writer` agent now omits `## Style
 
 ## Open questions
 
-- Should the fact-checker cut unsupported claims itself, or flag them for a person?
-- What citation format suits the target publications: inline links, footnotes, or a source list?
+- Should the fact-checker cut unsupported claims itself, or flag them for a person? Phase 2 flags them. Cutting a first-hand topic fact that has no URL waits for approval.
+- What citation format suits the target publications: inline links, footnotes, or a source list? Phase 2 uses inline markdown links plus a source list.
 - Where does human approval live for the CLI: an interactive prompt or a saved draft to approve later?
 - Does length fitting belong in the line edit (cut to fit) or in the structural edit?
 - For HaiMaker support: should truncated reasoning ever appear in `content` rather than `reasoning_content`, as it did in the pet-cat run? (Not blocking: Phase 0 rejects `length`.)

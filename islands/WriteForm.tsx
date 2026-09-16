@@ -11,19 +11,17 @@ interface Props {
   styles: string[];
   providers: string[];
   models: Record<string, ModelChoice[]>;
+  checkModels: ModelChoice[];
+  defaultCheckModel: string;
   providerProblems?: Record<string, string>;
 }
 
 type StageMap = Record<StageId, StageStatus>;
 
 function idleStages(): StageMap {
-  return {
-    research: "pending",
-    outline: "pending",
-    drafts: "pending",
-    style: "pending",
-    extend: "pending",
-  };
+  return Object.fromEntries(
+    WRITE_STAGES.map((stage) => [stage.id, "pending"]),
+  ) as StageMap;
 }
 
 function stepClass(status: StageStatus): string {
@@ -33,13 +31,17 @@ function stepClass(status: StageStatus): string {
 }
 
 export default function WriteForm(
-  { styles, providers, models, providerProblems = {} }: Props,
+  { styles, providers, models, checkModels, defaultCheckModel, providerProblems = {} }: Props,
 ) {
   const [topic, setTopic] = useState("Write a 900 word essay about pet cats.");
   const [style, setStyle] = useState("economist");
   const [provider, setProvider] = useState(providers[0] ?? "mercury");
   const [model, setModel] = useState(
     models[providers[0] ?? "mercury"]?.[0]?.id ?? "",
+  );
+  const [checkModel, setCheckModel] = useState(
+    checkModels.find((choice) => choice.id === defaultCheckModel)?.id ??
+      checkModels[0]?.id ?? "",
   );
   const [stages, setStages] = useState<StageMap>(idleStages);
   const [detail, setDetail] = useState("");
@@ -74,7 +76,7 @@ export default function WriteForm(
       const response = await fetch("/api/write", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ topic, style, provider, model }),
+        body: JSON.stringify({ topic, style, provider, model, checkModel }),
       });
       const type = response.headers.get("content-type") ?? "";
       if (type.includes("application/json")) {
@@ -159,6 +161,17 @@ export default function WriteForm(
             onChange={(event) => setModel(event.currentTarget.value)}
           >
             {(models[provider] ?? []).map((choice) => (
+              <option key={choice.id} value={choice.id}>{choice.label}</option>
+            ))}
+          </select>
+          <label class="label" for="check-model">Checker</label>
+          <select
+            id="check-model"
+            class="select w-full"
+            value={checkModel}
+            onChange={(event) => setCheckModel(event.currentTarget.value)}
+          >
+            {checkModels.map((choice) => (
               <option key={choice.id} value={choice.id}>{choice.label}</option>
             ))}
           </select>

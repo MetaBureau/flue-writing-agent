@@ -6,13 +6,13 @@ Deterministic checks for pipeline helpers and prompt contracts. No live model or
 
 ## Ownership
 
-`pipeline_test.ts` is the current suite. It imports `src/main.ts`, `src/agents/write.ts`, `src/skills/editorial.ts`, `src/research.ts`, `src/complete.ts`, and `src/catalog.ts`.
+`pipeline_test.ts` is the current suite. It imports `src/main.ts`, `src/agents/write.ts`, `src/skills/editorial.ts`, `src/research.ts`, `src/complete.ts`, `src/catalog.ts`, and `src/factcheck.ts`.
 
 ## Local Contracts
 
 - Run with `deno task test` (`deno test --allow-read --allow-write tests/`)
 - Assert prompt wording that encodes notes-only rules, and the style keep rule for a finished cut versus a stub
-- Assert prose rejection, paragraph repeat ratio, source-page note drops, and essay markdown without a style line
+- Assert prose rejection, paragraph repeat ratio, source-page note drops, essay markdown without a style line, fact-check citations outside the flags, and the Anthropic cache split
 - Research tests must keep ignoring a synthesized `answer` field, ignoring raw page bodies, and dropping empty bodies and furniture sentences
 
 ## Work Guidance

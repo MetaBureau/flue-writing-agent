@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Fresh screens for the writing test: topic, style, provider, model, then the saved essay.
+Fresh screens for the writing test: topic, style, provider, writer model, checker model, then the saved essay.
 
 ## Ownership
 
@@ -17,6 +17,7 @@ Fresh screens for the writing test: topic, style, provider, model, then the save
 - Providers are the keys of `PROVIDERS`. Picker ids stay in each provider's `models`. HaiMaker labels, prices, and the reasoning flag come from the model hub when that fetch succeeds
 - If the HaiMaker key's model list shares no picker id, the picker is empty and the form shows a warning. Do not show the curated list in that case
 - A model not in the chosen provider's `models` is HTTP 400 JSON `{ error }`
+- `checkModel` must be a HaiMaker picker id. The route passes it to `writeStages`. The checker still uses `HAIMAKER_API_KEY` when the writer is Mercury
 - A missing topic or unknown style is HTTP 400 JSON `{ error }`
 - A write streams `text/event-stream`: stage events, then `{ type: "essay", markdown }`, or `{ type: "error" }`
 

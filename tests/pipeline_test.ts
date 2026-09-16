@@ -26,6 +26,7 @@ import {
   outlineUserPrompt,
   pickDraft,
   repeatsDraft,
+  stageSystem,
   stripLeadingTitle,
   wordCountFromTopic,
   wordsToAsk,
@@ -38,11 +39,22 @@ import {
   reasoningEffortField,
 } from "../src/catalog.ts";
 import {
+  cacheSystemMessages,
   completionRequestBody,
   estimateUsd,
+  responseFormatField,
   RunMeter,
   usageFromPayload,
 } from "../src/complete.ts";
+import {
+  applyFactCheck,
+  checkModelId,
+  citableHits,
+  factcheckRecord,
+  markdownLink,
+  splitClaims,
+  verdictsFromContent,
+} from "../src/factcheck.ts";
 import {
   keepIfNotShortened,
   styleUserPrompt,
@@ -80,7 +92,8 @@ Deno.test("countWords ignores extra spaces", () => {
 Deno.test("outlineUserPrompt includes notes without OpenCall", () => {
   const notes = "The Flue agent is a Deno CLI.";
   const prompt = outlineUserPrompt(notes);
-  assertStringIncludes(prompt, notes);
+  assertStringIncludes(stageSystem(notes, "instruction"), notes);
+  assertFalse(prompt.includes(notes));
   assertStringIncludes(prompt, "900-word");
   assertStringIncludes(prompt, "Do not add introduction");
   assertStringIncludes(prompt, "Four sections at most");
@@ -96,13 +109,16 @@ Deno.test("draft prompt stays in the notes and sets a floor", () => {
       sections: ["Five calls"],
       wordCountTarget: 900,
     },
-    "The pipeline is five model calls.",
   );
-  assertStringIncludes(prompt, "only facts you may use");
+  assertStringIncludes(prompt, "only facts from the notes");
   assertStringIncludes(prompt, "Cover the product facts");
   assertStringIncludes(prompt, "Say each fact once");
   assertStringIncludes(prompt, "Do not add a closing paragraph.");
-  assertStringIncludes(prompt, "The pipeline is five model calls.");
+  assertStringIncludes(
+    stageSystem("The pipeline is five model calls.", "instruction"),
+    "The pipeline is five model calls.",
+  );
+  assertFalse(prompt.includes("The pipeline is five model calls."));
   assertFalse(prompt.includes("at least 900"));
 });
 
@@ -311,6 +327,36 @@ Deno.test("completion body caps reasoning tokens and records usage", () => {
   assertEquals(body.stream_options, { include_usage: true });
   assertEquals("reasoning_effort" in body, false);
   assertEquals("user" in body, false);
+  assertEquals(
+    responseFormatField(["response_format"], { type: "json_schema" }),
+    { response_format: { type: "json_schema" } },
+  );
+  assertEquals(
+    responseFormatField(["temperature"], { type: "json_schema" }),
+    {},
+  );
+  const cached = cacheSystemMessages("anthropic/claude-haiku-4-5", [
+    {
+      role: "system",
+      content: "Notes, the only facts you may use:\nA fact.\n\nDraft:\nThe draft.",
+      cachedPrefix: "Notes, the only facts you may use:\nA fact.",
+    },
+    { role: "user", content: "check" },
+  ]);
+  assertEquals(cached[0].content, [
+    {
+      type: "text",
+      text: "Notes, the only facts you may use:\nA fact.",
+      cache_control: { type: "ephemeral" },
+    },
+    { type: "text", text: "Draft:\nThe draft." },
+  ]);
+  assertEquals(
+    cacheSystemMessages("google/gemini-3.1-flash-lite", [
+      { role: "system", content: "notes" },
+    ])[0].content,
+    "notes",
+  );
 });
 
 Deno.test("reasoning effort is sent only for documented values the catalog lists", () => {
@@ -355,6 +401,66 @@ Deno.test("estimate uses catalog prices and does not add reasoning twice", () =>
   const estimate = estimateUsd(meter, prices);
   assertEquals(estimate.complete, true);
   assertEquals(Number(estimate.usd.toFixed(3)), 0.512);
+});
+
+Deno.test("fact-check cites a note URL and flags an unsupported claim", () => {
+  const hits = [{
+    title: "Pet survey",
+    url: "https://example.com/cats",
+    content: "Domestic cats in the United States number about 86.4 million.",
+  }];
+  const claim = "Domestic cats in the United States number about 86.4 million.";
+  const other = "The author keeps a white cat as a member of the household.";
+  const text = `${claim} ${other}`;
+  assertEquals(splitClaims(text).length, 2);
+  const checked = applyFactCheck(
+    text,
+    verdictsFromContent(JSON.stringify({
+      claims: [
+        { text: claim, status: "supported", url: "https://example.com/cats" },
+        { text: other, status: "supported", url: "https://evil.example/fake" },
+      ],
+    })),
+    hits,
+  );
+  assertStringIncludes(checked.text, "[Pet survey](https://example.com/cats)");
+  assertFalse(checked.text.includes("[unsupported]"));
+  assertEquals(checked.unsupportedClaims, [other]);
+  assertStringIncludes(checked.text, "## Sources");
+  assertFalse(checked.text.includes("evil.example"));
+  const dollar = "Costs rose by $& and $' last year in the survey.";
+  const awkward = "https://example.com/cats)";
+  const escaped = applyFactCheck(
+    dollar,
+    [{ text: dollar, status: "supported", url: awkward }],
+    [{ title: "Survey [2024]", url: awkward, content: "" }],
+  );
+  assertEquals(escaped.text.split(dollar).length, 2);
+  assertStringIncludes(
+    escaped.text,
+    markdownLink("Survey [2024]", "https://example.com/cats)"),
+  );
+  assertEquals(
+    checkModelId("google/gemini-3.1-flash-lite", "openai/gpt-4.1"),
+    "openai/gpt-4.1",
+  );
+  assertEquals(
+    checkModelId("openai/gpt-4.1", "openai/gpt-4.1"),
+    "google/gemini-3.1-flash-lite",
+  );
+  assertEquals(
+    checkModelId("google/gemini-3.1-flash-lite", "google/gemini-3.1-flash-lite"),
+    "openai/gpt-4.1",
+  );
+  assertEquals(
+    citableHits([{
+      ...hits[0],
+      content:
+        "School-going students can use these essays for their essay writing competitions and speech contests today.",
+    }]).length,
+    0,
+  );
+  assertStringIncludes(factcheckRecord(checked), other);
 });
 
 Deno.test("extend stops after three rejects or six calls", () => {

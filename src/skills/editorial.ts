@@ -1,5 +1,5 @@
 import { CutOffReply, type RunMeter, streamChat } from "../complete.ts";
-import { countWords, endsAsSentence } from "../agents/write.ts";
+import { countWords, endsAsSentence, systemMessage } from "../agents/write.ts";
 import { ResolvedProvider } from "../providers.ts";
 import {
   isStyleName,
@@ -40,7 +40,7 @@ export function styleUserPrompt(text: string, wordCountTarget: number): string {
     "Keep names, numbers, URLs, and product claims.",
     "Do not add facts, sections, or a conclusion.",
     `It is ${current} words. Do not pad it toward ${wordCountTarget} words.`,
-    text,
+    "Keep markdown links. Return only the rewritten draft.",
   ].join("\n\n");
 }
 
@@ -51,6 +51,7 @@ export const applyEditorialStyle = async (
   wordCountTarget: number,
   meter?: RunMeter,
   floorWords = 0,
+  notes = "",
 ): Promise<string> => {
   const style = isStyleName(styleName)
     ? styles[styleName]
@@ -60,8 +61,11 @@ export const applyEditorialStyle = async (
   if (model.apiKey) {
     let edited = "";
     try {
+      const instruction = `${styleSystemPrompt(style)}\n\nDraft:\n${text}`;
       edited = (await streamChat(model, [
-        { role: "system", content: styleSystemPrompt(style) },
+        notes
+          ? systemMessage(notes, instruction)
+          : { role: "system", content: instruction },
         { role: "user", content: styleUserPrompt(text, wordCountTarget) },
       ], {
         temperature: 0.2,

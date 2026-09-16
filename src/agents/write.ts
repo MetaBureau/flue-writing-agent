@@ -1,4 +1,5 @@
 import {
+  type ChatMessage,
   type CompletionTarget,
   CutOffReply,
   type RunMeter,
@@ -130,11 +131,15 @@ export function notesRecord(input: {
   outlineModel: string;
   draftModel: string;
   cost: string;
+  factcheck?: string;
 }): string {
   const model = input.outlineModel === input.draftModel
     ? input.outlineModel
     : `outline ${input.outlineModel}; drafts ${input.draftModel}`;
-  return `Model: ${model}\nCost: ${input.cost}\n\n${input.notes.trim()}\n`;
+  const findings = input.factcheck?.trim()
+    ? `\n\n${input.factcheck.trim()}\n`
+    : "\n";
+  return `Model: ${model}\nCost: ${input.cost}${findings}\n${input.notes.trim()}\n`;
 }
 
 export function groundedInNote(note: string, extra: string): boolean {
@@ -259,15 +264,48 @@ function parseOutline(content: string, topic: string): Outline {
   }
 }
 
+export function notesPrefix(notes: string): string {
+  return `Notes, the only facts you may use:\n${notes}`;
+}
+
+export function stageSystem(notes: string, instruction: string): string {
+  return `${notesPrefix(notes)}\n\n${instruction}`;
+}
+
+export function systemMessage(notes: string, instruction: string): ChatMessage {
+  return {
+    role: "system",
+    content: stageSystem(notes, instruction),
+    cachedPrefix: notesPrefix(notes),
+  };
+}
+
 export const OUTLINE_SYSTEM =
   "Return a JSON outline. Every section must name material already in the notes. Do not invent sections.";
+
+export const OUTLINE_RESPONSE_FORMAT = {
+  type: "json_schema",
+  json_schema: {
+    name: "outline",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["title", "sections", "wordCountTarget"],
+      properties: {
+        title: { type: "string" },
+        sections: { type: "array", items: { type: "string" } },
+        wordCountTarget: { type: "number" },
+      },
+    },
+  },
+};
 
 export function outlineUserPrompt(
   notes: string,
   words = wordCountFromTopic(notes),
 ): string {
   return [
-    `Notes:\n${notes}`,
     `Outline a ${words}-word post that uses only these notes.`,
     "Return JSON: {title: string, sections: string[], wordCountTarget: number}",
     "Each section is a heading for claims already written in the notes.",
@@ -283,15 +321,13 @@ export const DRAFT_SYSTEM =
 export function draftUserPrompt(
   instruction: string,
   outline: Pick<Outline, "title" | "sections" | "wordCountTarget">,
-  notes: string,
 ): string {
   const sections = outline.sections.map((section) => `- ${section}`).join("\n");
   return [
     `${instruction}.`,
     `Title: ${outline.title}`,
     `Sections, in this order:\n${sections}`,
-    `Source notes, the only facts you may use:\n${notes}`,
-    "Cover the product facts in the notes. Say each fact once. Stop when those facts are covered.",
+    "Use only facts from the notes. Cover the product facts in the notes. Say each fact once. Stop when those facts are covered.",
     "Do not copy mission statements, passion, or first-person company voice.",
     "Do not add a closing paragraph. Do not add praise, predictions, or facts that are not in the notes.",
   ].join("\n\n");
@@ -326,7 +362,7 @@ export function expansionUserPrompt(
     "Use active voice. Do not add praise, a mission, a prediction, or a closing.",
     "Do not name the author of a source page. Do not attribute the product to another company.",
     `Note:\n${note}`,
-    `Draft so far:\n${draft}`,
+    ...(draft ? [`Draft so far:\n${draft}`] : []),
   ].join("\n\n");
 }
 
@@ -369,6 +405,7 @@ export const generateOutline = async (
   notes: SourceNotes,
   model: ModelConfig,
   meter?: RunMeter,
+  supportedParams?: readonly string[],
 ): Promise<Outline> => {
   const topic = notes.topic ?? notes.text;
   const words = wordCountFromTopic(topic);
@@ -378,13 +415,15 @@ export const generateOutline = async (
   }
 
   const content = (await streamChat(model, [
-    { role: "system", content: OUTLINE_SYSTEM },
+    systemMessage(notes.text, OUTLINE_SYSTEM),
     { role: "user", content: outlineUserPrompt(notes.text, words) },
   ], {
     temperature: 0.2,
     label: "outline",
     maxTokens: OUTLINE_MAX_TOKENS,
     meter,
+    supportedParams,
+    responseFormat: OUTLINE_RESPONSE_FORMAT,
   })).content;
 
   const outline = parseOutline(content, topic);
@@ -426,10 +465,10 @@ export const generateDrafts = async (
   const drafts: Draft[] = [];
   for (const { name, instruction } of styles) {
     const content = (await streamChat(model, [
-      { role: "system", content: DRAFT_SYSTEM },
+      systemMessage(notes.text, DRAFT_SYSTEM),
       {
         role: "user",
-        content: draftUserPrompt(instruction, outline, notes.text),
+        content: draftUserPrompt(instruction, outline),
       },
     ], {
       temperature: 0.3,
@@ -485,8 +524,8 @@ export async function extendDraft(
     let extra = "";
     try {
       extra = (await streamChat(model, [
-        { role: "system", content: DRAFT_SYSTEM },
-        { role: "user", content: expansionUserPrompt(note, each, text) },
+        systemMessage(notes, `${DRAFT_SYSTEM}\n\nDraft so far:\n${text}`),
+        { role: "user", content: expansionUserPrompt(note, each, "") },
       ], {
         temperature: 0.7,
         label: `${label}:expand:${index + 1}`,

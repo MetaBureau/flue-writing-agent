@@ -9,6 +9,7 @@ function eventStream(input: {
   style: typeof STYLE_NAMES[number];
   provider?: string;
   model?: string;
+  checkModel?: string;
 }): Response {
   const stream = new ReadableStream({
     async start(controller) {
@@ -41,11 +42,13 @@ export const handler = define.handlers({
       style?: string;
       provider?: string;
       model?: string;
+      checkModel?: string;
     } | null;
     const topic = body?.topic?.trim() ?? "";
     const style = body?.style ?? "professional";
     const provider = body?.provider || undefined;
     const model = body?.model || undefined;
+    const checkModel = body?.checkModel || undefined;
     if (!topic) {
       return Response.json({ error: "Topic is required." }, { status: 400 });
     }
@@ -61,6 +64,9 @@ export const handler = define.handlers({
     if (model && !isProviderModel(provider ?? "mercury", model)) {
       return Response.json({ error: "Unknown model for that provider." }, { status: 400 });
     }
-    return eventStream({ topic, style, provider, model });
+    if (checkModel && !isProviderModel("haimaker", checkModel)) {
+      return Response.json({ error: "Unknown checker model." }, { status: 400 });
+    }
+    return eventStream({ topic, style, provider, model, checkModel });
   },
 });

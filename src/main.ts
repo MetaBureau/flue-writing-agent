@@ -10,16 +10,23 @@ import {
   pickDraft,
   stripLeadingTitle,
 } from "./agents/write.ts";
-import { loadPrices } from "./catalog.ts";
+import { loadModelHub, pricesFromCatalog } from "./catalog.ts";
+import {
+  checkClaims,
+  citableHits,
+  factcheckRecord,
+  resolveChecker,
+} from "./factcheck.ts";
 import { formatRun, RunMeter } from "./complete.ts";
 import { applyEditorialStyle } from "./skills/editorial.ts";
 import { gatherResearch } from "./research.ts";
-import { PROVIDERS, resolveProvider } from "./providers.ts";
+import { isProviderModel, PROVIDERS, resolveProvider } from "./providers.ts";
 
 interface Args {
   topic: string;
   provider?: string;
   model?: string;
+  checkModel?: string;
   style: "economist" | "strunk-white" | "monocle" | "professional";
   outputFormat: "markdown" | "json" | "plain";
   verbose: boolean;
@@ -42,6 +49,8 @@ function parseArgs(): Args {
       args.provider = raw[++i];
     } else if (arg === "--model" && raw[i + 1]) {
       args.model = raw[++i];
+    } else if (arg === "--check-model" && raw[i + 1]) {
+      args.checkModel = raw[++i];
     } else if (arg === "--style" && raw[i + 1]) {
       args.style = raw[++i] as Args["style"];
     } else if (arg === "--format" && raw[i + 1]) {
@@ -62,6 +71,9 @@ function parseArgs(): Args {
     console.log("  --provider <name>   Provider: haimaker, mercury");
     console.log(
       "  --model <id>        Model id from the provider's list (e.g. openai/gpt-4.1)",
+    );
+    console.log(
+      "  --check-model <id>  HaiMaker model for fact-check (default openai/gpt-4.1)",
     );
     console.log(
       "  --style <name>      Style: economist, strunk-white, monocle, professional",
@@ -157,6 +169,9 @@ async function runWritingWorkflow(args: Args) {
     (Deno.env.get("FAST_PROVIDER") as keyof typeof PROVIDERS) ||
     "mercury";
 
+  if (args.checkModel && !isProviderModel("haimaker", args.checkModel)) {
+    throw new Error("Unknown checker model.");
+  }
   const fastProvider = resolveProvider(providerName, "fast", args.model);
   const reasoningProvider = resolveProvider(
     providerName,
@@ -174,6 +189,9 @@ async function runWritingWorkflow(args: Args) {
     );
     console.log(
       `Reasoning Model: ${reasoningProvider.modelId} (${reasoningProvider.baseUrl})`,
+    );
+    console.log(
+      `Checker: ${resolveChecker(fastProvider.modelId, args.checkModel).modelId}`,
     );
     console.log(`Output Format: ${args.outputFormat}`);
     console.log(`Verbose: ${args.verbose}`);
@@ -193,12 +211,19 @@ async function runWritingWorkflow(args: Args) {
     topic: args.topic,
   };
 
-  const prices = await loadPrices();
+  const catalog = await loadModelHub().catch(() => new Map());
+  const prices = pricesFromCatalog(catalog);
   const meter = new RunMeter();
   const cost = () => formatRun(meter, prices);
   try {
     log(args, "outline", `Generating structure with ${reasoningProvider.name}`);
-    const outline = await generateOutline({}, notes, reasoningProvider, meter);
+    const outline = await generateOutline(
+      {},
+      notes,
+      reasoningProvider,
+      meter,
+      catalog.get(reasoningProvider.modelId)?.supportedParams,
+    );
     console.log(cost());
 
     log(args, "drafts", `Creating variations with ${fastProvider.name}`);
@@ -237,12 +262,26 @@ async function runWritingWorkflow(args: Args) {
       outline.wordCountTarget,
       meter,
       countWords(extended) > countWords(draft) ? countWords(draft) : 0,
+      notes.text,
     );
     console.log(cost());
 
-    console.log(`Words: ${countWords(finalContent)}`);
+    log(args, "factcheck", "Matching claims to source URLs");
+    const hits = citableHits(research.hits);
+    const checker = resolveChecker(fastProvider.modelId, args.checkModel);
+    const checked = await checkClaims(
+      finalContent,
+      hits,
+      checker,
+      notes.text,
+      meter,
+    );
+    console.log(cost());
+    console.log(`[factcheck] ${checked.detail}`);
 
-    const formatted = formatOutput(args, finalContent);
+    console.log(`Words: ${countWords(checked.text)}`);
+
+    const formatted = formatOutput(args, checked.text);
     const slug = topicSlug(args.topic);
     const path = `output/${slug}.md`;
     await writeOutputFile(path, formatted);
@@ -253,6 +292,7 @@ async function runWritingWorkflow(args: Args) {
         outlineModel: reasoningProvider.modelId ?? reasoningProvider.name,
         draftModel: fastProvider.modelId ?? fastProvider.name,
         cost: cost(),
+        factcheck: factcheckRecord(checked),
       }),
     );
 

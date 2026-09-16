@@ -4,6 +4,7 @@ export const WRITE_STAGES = [
   { id: "drafts", label: "Drafts" },
   { id: "extend", label: "Extend" },
   { id: "style", label: "Style" },
+  { id: "factcheck", label: "Fact-check" },
 ] as const;
 
 export type StageId = (typeof WRITE_STAGES)[number]["id"];
