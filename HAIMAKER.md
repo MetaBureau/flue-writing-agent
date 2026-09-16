@@ -13,12 +13,12 @@ Haimaker is an emerging model API provider. Before integrating, verify:
 ```bash
 # Set Haimaker credentials
 export FAST_PROVIDER=haimaker
-export FAST_MODEL_URL=https://api.haimaker.com/v1  # Replace with actual URL
+export FAST_MODEL_URL=https://api.haimaker.ai/v1
 export FAST_MODEL_ID=your-fast-model-id             # Replace with actual model ID
 export FAST_MODEL_KEY=your-api-key
 
 export REASONING_PROVIDER=haimaker
-export REASONING_URL=https://api.haimaker.com/v1    # Replace with actual URL
+export REASONING_URL=https://api.haimaker.ai/v1
 export REASONING_MODEL_ID=your-reasoning-model-id   # Replace with actual model ID
 export REASONING_MODEL_KEY=your-api-key
 ```

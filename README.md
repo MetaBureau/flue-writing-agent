@@ -63,19 +63,18 @@ See `.env.example` for complete provider options.
 
 ```
 src/
-├── main.ts          # CLI + provider routing
-├── providers.ts     # Provider registry (extensible)
+├── main.ts          # CLI, then write the essay to output/
+├── complete.ts      # Streaming chat completion
+├── providers.ts     # Provider registry
 ├── agents/
-│   └── write.ts     # Workflow: outline → drafts → select
-├── tools/
-│   └── web.ts       # Web research (DuckDuckGo)
+│   └── write.ts     # Outline, three drafts, style pick
 └── skills/
-    └── editorial.ts # Style enforcement
+    └── editorial.ts # Style pass
 ```
 
 ## Features
 
-- **Research**: Web search via DuckDuckGo with fallback
+- **Topic notes**: Outlines and drafts use the CLI topic string as the only source material
 - **Dual-Model**: Fast model for drafts, reasoning model for outline
 - **Style Enforcement**: Apply editorial rules (Economist, Strunk & White, Monocle, Professional)
 - **Provider Abstraction**: Unified interface for any OpenAI-compatible API (HaiMaker, Mercury)
@@ -84,11 +83,12 @@ src/
 
 ## Workflow
 
-1. **Research**: Fetch relevant web sources
-2. **Outline**: Generate structured outline with reasoning model
-3. **Draft**: Create multiple style variations
-4. **Select**: Choose best draft based on preferred style
-5. **Style Pass**: Apply editorial refinement
+1. **Notes**: The topic string is the only source
+2. **Outline**: Generate a structured outline with the reasoning model
+3. **Draft**: Write conversational, professional, and analytical drafts
+4. **Select**: Keep the draft voice that matches `--style`
+5. **Style pass**: Apply the editorial sample
+6. **Save**: Print the essay and write `output/<slug>.md`
 
 ## Security
 
