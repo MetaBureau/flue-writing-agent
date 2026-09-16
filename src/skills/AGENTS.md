@@ -6,14 +6,15 @@ Rewrite a finished draft for an editorial profile without dropping claims or add
 
 ## Ownership
 
-`editorial.ts` owns style catalogs, style prompts, `keepIfNotShortened`, and `applyEditorialStyle`.
+`styles.ts` owns the style catalog. `editorial.ts` owns style prompts, `keepIfNotShortened`, and `applyEditorialStyle`.
 
 ## Local Contracts
 
 - Styles: economist, strunk-white, monocle, professional; unknown names fall back to professional
-- Style pass rewrites in place: keep every claim and paragraph; do not add facts, sections, praise, or a conclusion
-- Do not shorten. If the model returns under 90% of the input word count, keep the original
-- Do not pad toward the word floor; `main.ts` extends again after this pass
+- Style pass rewrites in place. Cut praise and repeated claims. Do not add facts, sections, or a conclusion
+- A long draft may come back shorter. Keep that rewrite when it ends as a sentence and has at least 80 words. Reject empty text and stubs
+- Inputs under 200 words still reject a rewrite under half the original word count
+- Do not pad toward the word floor. `main.ts` extends after this pass
 - Missing API key returns the input unchanged
 
 ## Work Guidance

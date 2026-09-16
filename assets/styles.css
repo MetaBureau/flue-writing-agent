@@ -1,0 +1,49 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@plugin "daisyui" {
+  themes: false;
+  include:
+    alert,
+    button,
+    card,
+    label,
+    loading,
+    select,
+    steps,
+    textarea;
+  logs: false;
+}
+
+@plugin "daisyui/theme" {
+  name: "flue";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+  --color-base-100: #f7f4ee;
+  --color-base-200: #ebe4d6;
+  --color-base-300: #d8cdb8;
+  --color-base-content: #1c1917;
+  --color-primary: #1d4e39;
+  --color-primary-content: #f7f4ee;
+  --color-secondary: #7a5b32;
+  --color-secondary-content: #f7f4ee;
+  --color-accent: #1d4e39;
+  --color-accent-content: #f7f4ee;
+  --color-neutral: #292524;
+  --color-neutral-content: #f7f4ee;
+  --color-info: #1d4e39;
+  --color-info-content: #f7f4ee;
+  --color-success: #2f6e5a;
+  --color-success-content: #f7f4ee;
+  --color-warning: #946331;
+  --color-warning-content: #f7f4ee;
+  --color-error: #b33f3f;
+  --color-error-content: #f7f4ee;
+  --radius-selector: 0.25rem;
+  --radius-field: 0.25rem;
+  --radius-box: 0.5rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}

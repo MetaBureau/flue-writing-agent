@@ -4,12 +4,21 @@ Structured writing workflow with multi-provider support, style profiles, and CLI
 
 ## Quick Start
 
+The test form is a Fresh app. The Flue agent is the `flue run` command below.
+
 ```bash
-# Setup (HaiMaker is now default)
-cp .env.example .env
-# Edit .env with your API keys
-deno task start "your topic"
+deno task dev
 ```
+
+Open http://127.0.0.1:5175. Choose a style, then write. Port 5175 stays fixed.
+
+```bash
+npx flue run src/agents/writer.ts --data '{"style":"economist"}' --message "Write a 900 word blog post about pet cats."
+```
+
+Mercury uses `FAST_MODEL_KEY` already in `.env`. Do not print that key.
+
+The older five-call script is still `deno task start "<topic>"`.
 
 ## CLI Options
 
@@ -17,18 +26,21 @@ deno task start "your topic"
 deno task start "<topic>" [options]
 
 Options:
-  --provider <name>   Provider: haimaker, mercury, openrouter, together
+  --provider <name>   Provider: haimaker, mercury
+  --model <id>        Model id, e.g. anthropic/claude-haiku-4-5 (HaiMaker)
   --style <name>      Style: economist, strunk-white, monocle, professional
   --format <fmt>      Output: markdown, json, plain
   --verbose           Show detailed progress
   --dry-run           Show config without running
+
+Length defaults to 900 words. Put a count in the topic (`200 words`) to override.
 ```
 
 **Examples:**
 
 ```bash
 deno task start "AI agent frameworks" --style economist --format json --verbose
-deno task start "Climate policy" --provider together --style professional
+deno task start "Climate policy" --provider haimaker --model openai/gpt-4.1 --style professional
 deno task start "Testing" --dry-run
 ```
 
@@ -65,6 +77,7 @@ See `.env.example` for complete provider options.
 src/
 ├── main.ts          # CLI, then write the essay to output/
 ├── complete.ts      # Streaming chat completion
+├── research.ts      # Tavily search, excerpts only, no synthesized answer
 ├── providers.ts     # Provider registry
 ├── agents/
 │   └── write.ts     # Outline, three drafts, style pick
@@ -74,7 +87,7 @@ src/
 
 ## Features
 
-- **Topic notes**: Outlines and drafts use the CLI topic string as the only source material
+- **Topic notes**: The topic string plus Tavily page excerpts. Prompts forbid extra sections, and an expansion is rejected if it is not about its note
 - **Dual-Model**: Fast model for drafts, reasoning model for outline
 - **Style Enforcement**: Apply editorial rules (Economist, Strunk & White, Monocle, Professional)
 - **Provider Abstraction**: Unified interface for any OpenAI-compatible API (HaiMaker, Mercury)
@@ -83,12 +96,14 @@ src/
 
 ## Workflow
 
-1. **Notes**: The topic string is the only source
-2. **Outline**: Generate a structured outline with the reasoning model
-3. **Draft**: Write conversational, professional, and analytical drafts
-4. **Select**: Keep the draft voice that matches `--style`
-5. **Style pass**: Apply the editorial sample
-6. **Save**: Print the essay and write `output/<slug>.md`
+1. **Research**: Tavily search for page excerpts. No synthesized answer. If the call fails, continue with the topic only
+2. **Notes**: The topic string plus those excerpts
+3. **Outline**: Generate a structured outline with the reasoning model
+4. **Draft**: Write conversational, professional, and analytical drafts
+5. **Select**: Keep the draft voice that matches `--style`
+6. **Style pass**: Rewrite the selected draft. Cut praise, repetition, ads, and biographies. Keep names, numbers, and URLs
+7. **Extend**: Add unused on-topic facts until the word floor. Stop when an expansion repeats the draft
+8. **Save**: Print the essay and write `output/<slug>.md`
 
 ## Security
 

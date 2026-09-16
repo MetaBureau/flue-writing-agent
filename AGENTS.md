@@ -77,9 +77,13 @@ Default section order:
 
 ## This Project
 
-Deno CLI that writes a notes-only essay: Tavily page excerpts plus the topic, then outline, three drafts, style pick, extend, editorial pass, extend again, print, and write `output/<slug>.md`.
+Deno Fresh UI plus a Flue agent. `deno task dev` serves the form on port 5175. The form posts topic, style, provider, and model to `/api/write`. That route streams stage events and then the essay markdown for the page.
 
-- Entry: `src/main.ts` via `deno task start "<topic>"`
+- UI: `deno task dev` on port 5175. Keep that port.
+- `deno.json` sets `"workspace": []` so Fresh boots here without joining the parent MetaBureau workspace. Do not remove that field.
+- Import Fresh from `jsr:@fresh/core`. The bare specifier `fresh` resolves to an unrelated npm package under Vite.
+- `deno install` needs `--minimum-dependency-age=0` while `package.json` depends on a recently published `@flue/cli`.
+- CLI entry: `src/main.ts` via `deno task start "<topic>"`
 - Stack: Deno, OpenAI-compatible `/chat/completions`, optional Tavily
 - Length defaults to 900 words; a count in the topic (`200 words`) overrides
 - Fast model drafts; reasoning model outlines
@@ -97,7 +101,8 @@ Deno CLI that writes a notes-only essay: Tavily page excerpts plus the topic, th
 
 ## Child DOX Index
 
+- `routes/AGENTS.md` — Fresh page and `/api/write`
 - `src/AGENTS.md` — CLI entry, providers, streaming completion, Tavily research
 - `tests/AGENTS.md` — Deno tests for prompts, notes grounding, and research parsing
 
-Root keeps `README.md`, `deno.json`, `deno.lock`, `.env.example`, `.gitignore`, root `write.ts`, and sample markdown.
+Root keeps `README.md`, `deno.json`, `deno.lock`, `.env.example`, `.gitignore`, `define.ts`, `main.ts`, `client.ts`, `vite.config.ts`, `assets/styles.css`, root `write.ts`, and sample markdown.

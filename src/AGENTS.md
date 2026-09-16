@@ -6,34 +6,39 @@ Runtime for the writing CLI: parse flags, resolve models, gather notes, run the 
 
 ## Ownership
 
-- `main.ts` — CLI, workflow orchestration, `topicSlug`, output formatting
-- `providers.ts` — HaiMaker and Mercury registry and env resolution
+- `workflow.ts` — stage events for the form. Research, outline, drafts, style, extend, then the essay markdown.
+- `providers.ts` — HaiMaker and Mercury registry, each provider's `models` list for the picker, and env resolution
 - `complete.ts` — streaming (and JSON fallback) chat completions
-- `research.ts` — Tavily search; excerpts only
+- `notes.ts` — Tavily search snippets; no raw page body
+- `research.ts` — re-exports `notes.ts` for the Deno script
+- `db.ts` — Flue sqlite adapter
+- `flue.config.ts` — Flue node target
 
 Parent root owns `deno.json` tasks and env templates. Child folders own drafting and style.
 
 ## Local Contracts
 
-- Default provider is Mercury when `--provider` and `FAST_PROVIDER` are unset
-- `resolveProvider(name, "fast" | "reasoning")` reads provider-specific env first, then shared `FAST_*` / `REASONING_*` when that provider is selected
+- HaiMaker auth is `Authorization: Bearer` plus `HAIMAKER_API_KEY`, as in the completions docs. Do not rewrite or reject the value before the request.
+- `resolveProvider(name, "fast" | "reasoning", model?)` uses a chosen model for every stage when given, otherwise reads provider-specific env first, then shared `FAST_*` / `REASONING_*` when that provider is selected
 - Completions POST to `${baseUrl}/chat/completions` with SSE; accept JSON if the server ignores `stream`
-- Research: at most 3 sources, 180-word excerpts, `include_answer: false`; HTTP or network failure continues with the topic only
+- Research: advanced search, at most 5 sources, 180 words of the result snippet. No raw page body, no synthesized answer. Drop furniture sentences. A hit must name a distinctive word from the query. HTTP or network failure continues with the topic only
 - Notes are `topic + research.text`; they are the only facts later stages may use
 - Dry run prints config and does not call models or Tavily beyond the key-presence check
 - Atomic write: `output/<slug>.md.tmp` then rename
 
 ## Work Guidance
 
-- Keep CLI flags aligned with `README.md`: `--provider`, `--style`, `--format`, `--verbose`, `--dry-run`
+- Keep CLI flags aligned with `README.md`: `--provider`, `--model`, `--style`, `--format`, `--verbose`, `--dry-run`
 - Do not add a synthesized Tavily answer, extra research providers, or auth beyond Bearer API keys
 - Provider names in `PROVIDERS` are `haimaker` and `mercury`
+- Add a model to a provider's `models` only after a live chat call through `streamChat` returns plain text (no `<think>` output)
+- The CLI `--model` passes any id through; the form only accepts ids in `models`
 
 ## Verification
 
-`deno task test` covers slug, word count, research query/payload helpers, and pipeline prompts. Live model and Tavily calls are not required for tests.
+`deno lint` and `deno check src/ routes/ islands/ tests/ main.ts client.ts define.ts flue.config.ts` must be clean. `deno task test` covers slug, word count, research query/payload helpers, and pipeline prompts. Live model and Tavily calls are not required for tests.
 
 ## Child DOX Index
 
-- `agents/AGENTS.md` — outline, three drafts, style pick, note-grounded extension
-- `skills/AGENTS.md` — editorial style pass that must not shorten or invent
+- `src/agents/AGENTS.md` — Flue `Writer` agent, plus the older outline/draft/extend script
+- `skills/AGENTS.md` — editorial style pass that may cut repetition and must not invent

@@ -11,8 +11,8 @@ Deterministic checks for pipeline helpers and prompt contracts. No live model or
 ## Local Contracts
 
 - Run with `deno task test` (`deno test --allow-read --allow-write tests/`)
-- Assert prompt wording that encodes notes-only and no-shorten rules, not just function names
-- Research tests must keep ignoring a synthesized `answer` field and dropping empty bodies
+- Assert prompt wording that encodes notes-only rules, and the style keep rule for a finished cut versus a stub
+- Research tests must keep ignoring a synthesized `answer` field, ignoring raw page bodies, and dropping empty bodies and furniture sentences
 
 ## Work Guidance
 

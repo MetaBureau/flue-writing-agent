@@ -13,6 +13,7 @@ export interface ChatMessage {
 interface CompleteOptions {
   temperature: number;
   label: string;
+  maxTokens?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -33,6 +34,13 @@ function contentFromPayload(payload: unknown): string {
   const choices = payload.choices;
   if (!Array.isArray(choices)) return "";
   return choices.map(textFromChoice).join("");
+}
+
+function finishReason(payload: unknown): string | undefined {
+  if (!isRecord(payload) || !Array.isArray(payload.choices)) return undefined;
+  const choice = payload.choices.at(-1);
+  if (!isRecord(choice) || typeof choice.finish_reason !== "string") return undefined;
+  return choice.finish_reason;
 }
 
 function snippet(body: string): string {
@@ -67,6 +75,7 @@ export async function streamChat(
       temperature: options.temperature,
       stream: true,
       messages,
+      ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
     }),
     signal: AbortSignal.timeout(150_000),
   });
@@ -91,7 +100,8 @@ export async function streamChat(
   if (type.includes("application/json")) {
     const payload: unknown = await response.json();
     const content = contentFromPayload(payload);
-    console.log(`[${options.label}] ${model.modelId} ${elapsed()}ms`);
+    const reason = finishReason(payload);
+    console.log(`[${options.label}] ${model.modelId} ${elapsed()}ms${reason ? ` finish=${reason}` : ""}`);
     return content;
   }
 
@@ -103,6 +113,7 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
+  let reason = "";
 
   while (true) {
     const { done, value } = await reader.read();
@@ -116,13 +127,15 @@ export async function streamChat(
       const data = trimmed.slice(5).trim();
       if (data === "[DONE]") continue;
       try {
-        content += contentFromPayload(JSON.parse(data));
+        const payload: unknown = JSON.parse(data);
+        content += contentFromPayload(payload);
+        reason = finishReason(payload) ?? reason;
       } catch {
         continue;
       }
     }
   }
 
-  console.log(`[${options.label}] ${model.modelId} ${elapsed()}ms`);
+  console.log(`[${options.label}] ${model.modelId} ${elapsed()}ms${reason ? ` finish=${reason}` : ""}`);
   return content;
 }

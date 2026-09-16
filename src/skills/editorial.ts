@@ -1,39 +1,36 @@
 import { streamChat } from "../complete.ts";
+import { countWords, endsAsSentence } from "../agents/write.ts";
 import { ResolvedProvider } from "../providers.ts";
+import { isStyleName, styleSystemPrompt, styles, type StyleRules } from "./styles.ts";
 
-export interface StyleRules {
-  name: string;
-  rules: string[];
-  transformation: string;
-  sample: string;
+export { styleSystemPrompt, styles, type StyleRules };
+
+const STYLE_STUB_WORDS = 80;
+
+export function keepIfNotShortened(original: string, edited: string): string {
+  const next = edited.trim();
+  if (!next) return original;
+  const nextWords = countWords(next);
+  const originalWords = countWords(original);
+  if (originalWords < 200) {
+    if (nextWords < originalWords * 0.5) return original;
+    return next;
+  }
+  if (nextWords < STYLE_STUB_WORDS || !endsAsSentence(next)) return original;
+  return next;
 }
 
-export const styles: Record<string, StyleRules> = {
-  economist: {
-    name: "Economist",
-    rules: ["active voice", "omits needless words", "direct", "no passive voice", "strong verbs"],
-    transformation: "Remove hedging words (very, really, quite), eliminate passive voice, replace weak verbs with strong ones",
-    sample: "Markets react sharply when policy shifts.",
-  },
-  "strunk-white": {
-    name: "Strunk & White",
-    rules: ["active voice", "positive form", "specific", "omit needless words"],
-    transformation: "Convert to active voice, remove unnecessary adjectives, make abstract concepts concrete",
-    sample: "Prefer the active voice and cut every needless word.",
-  },
-  monocle: {
-    name: "Monocle",
-    rules: ["optimistic", "solutions-oriented", "forward-looking"],
-    transformation: "Emphasize opportunities over problems, use forward-looking language, add constructive framing",
-    sample: "The best cities turn constraints into everyday advantages.",
-  },
-  professional: {
-    name: "Professional",
-    rules: ["formal", "precise", "objective"],
-    transformation: "Maintain formal tone, use precise terminology, avoid colloquialisms",
-    sample: "The report summarizes findings without editorializing.",
-  },
-};
+export function styleUserPrompt(text: string, wordCountTarget: number): string {
+  const current = countWords(text);
+  return [
+    "Rewrite into the style. Cut praise, passion, mission statements, and sentences that repeat a point already made.",
+    "Drop ads, author biographies, view counts, music credits, and any sentence that is not about the subject.",
+    "Keep names, numbers, URLs, and product claims.",
+    "Do not add facts, sections, or a conclusion.",
+    `It is ${current} words. Do not pad it toward ${wordCountTarget} words.`,
+    text,
+  ].join("\n\n");
+}
 
 export const applyEditorialStyle = async (
   text: string,
@@ -41,21 +38,21 @@ export const applyEditorialStyle = async (
   model: ResolvedProvider,
   wordCountTarget: number,
 ): Promise<string> => {
-  const style = styles[styleName] || styles.professional;
+  const style = isStyleName(styleName) ? styles[styleName] : styles.professional;
   let result = text;
 
   if (model.apiKey) {
     const edited = await streamChat(model, [
-      {
-        role: "system",
-        content: `Apply ${style.name} style rules: ${style.rules.join(", ")}. Transformation goal: ${style.transformation}. Example sentence: ${style.sample}`,
-      },
-      {
-        role: "user",
-        content: `Edit this text to match the style. Target length: ${wordCountTarget} words.\n\n${text}`,
-      },
-    ], { temperature: 0.3, label: `style:${styleName}` });
-    result = edited || result;
+      { role: "system", content: styleSystemPrompt(style) },
+      { role: "user", content: styleUserPrompt(text, wordCountTarget) },
+    ], { temperature: 0.2, label: `style:${styleName}`, maxTokens: 4096 });
+    const kept = keepIfNotShortened(text, edited);
+    if (kept === text && edited.trim()) {
+      console.log(`[style:${styleName}] discarded rewrite (${countWords(edited)} words)`);
+    } else if (countWords(kept) < countWords(text)) {
+      console.log(`[style:${styleName}] kept the cut (${countWords(text)} -> ${countWords(kept)})`);
+    }
+    result = kept;
   }
 
   return result;

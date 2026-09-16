@@ -1,2 +1,6 @@
 output/
 .arena/
+node_modules/
+dist/
+data/
+_fresh/

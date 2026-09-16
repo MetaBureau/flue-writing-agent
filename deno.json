@@ -1,13 +1,52 @@
 {
-  "name": "flue-writing-agent",
-  "version": "0.1.0",
-  "compilerOptions": {
-    "strict": true,
-    "lib": ["ESNext", "DOM"]
+  "imports": {
+    "fresh": "jsr:@fresh/core@^2.3.3",
+    "@fresh/plugin-vite": "jsr:@fresh/plugin-vite@^1.1.2",
+    "vite": "npm:vite@^7.3.1",
+    "tailwindcss": "npm:tailwindcss@^4.2.2",
+    "@tailwindcss/vite": "npm:@tailwindcss/vite@^4.2.2",
+    "@tailwindcss/typography": "npm:@tailwindcss/typography@^0.5.19",
+    "daisyui": "npm:daisyui@^5.5.19",
+    "preact": "npm:preact@^10.26.9",
+    "@std/dotenv/load": "jsr:@std/dotenv@^0.225.6/load",
+    "@flue/runtime": "npm:@flue/runtime@^2.0.7",
+    "@flue/runtime/": "npm:/@flue/runtime@^2.0.7/",
+    "@earendil-works/pi-ai": "npm:@earendil-works/pi-ai@^0.83.0",
+    "@earendil-works/pi-ai/": "npm:/@earendil-works/pi-ai@^0.83.0/",
+    "valibot": "npm:valibot@^1.2.0"
   },
   "tasks": {
     "start": "deno run --env --allow-net --allow-read --allow-write --allow-env src/main.ts",
-    "dev": "deno run --watch --env --allow-net --allow-read --allow-write --allow-env src/main.ts",
+    "dev": "vite",
     "test": "deno test --allow-read --allow-write tests/"
-  }
+  },
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["dom", "dom.asynciterable", "dom.iterable", "ESNext", "deno.ns"],
+    "jsx": "precompile",
+    "jsxImportSource": "preact",
+    "jsxPrecompileSkipElements": [
+      "a",
+      "img",
+      "source",
+      "body",
+      "html",
+      "head",
+      "title",
+      "meta",
+      "script",
+      "link",
+      "style",
+      "base",
+      "noscript",
+      "template"
+    ],
+    "types": ["vite/client"]
+  },
+  "lint": {
+    "rules": { "tags": ["recommended", "fresh", "jsx"] }
+  },
+  "workspace": [],
+  "nodeModulesDir": "auto",
+  "exclude": ["**/_fresh/*", "node_modules"]
 }

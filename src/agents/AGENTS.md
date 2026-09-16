@@ -2,24 +2,31 @@
 
 ## Purpose
 
-Notes-only writing: JSON outline from notes, three voice drafts, pick by `--style`, then extend until the word floor without new facts.
+Flue writing agent, plus the older notes-only draft script.
+
+`writer.ts` is the Flue agent for `flue run`. The Fresh form does not call it. It streams `src/workflow.ts`.
+
+`write.ts` still owns the older outline, three drafts, style pick, and extension used by `deno task start`.
 
 ## Ownership
 
-`write.ts` owns outline/draft/extend prompts, word-count helpers, expansion acceptance, and model calls through `streamChat`.
+- `writer.ts` registers Mercury (`FAST_MODEL_KEY`) and HaiMaker (`HAIMAKER_API_KEY`). The form's `provider` chooses the model.
+- `run.ts` can boot Flue in Deno. The form does not use it.
+- `write.ts` owns outline/draft/extend prompts, word-count helpers, expansion acceptance, and model calls through `streamChat`. The form workflow calls these stages.
 
 ## Local Contracts
 
 - `wordCountFromTopic` defaults to 900 unless the topic contains `N words`
-- Outline JSON: `{title, sections, wordCountTarget}`; sections must name material already in the notes; no invented intro/conclusion/roadmap
+- Outline JSON: `{title, sections, wordCountTarget}`; at most four sections; sections must name material already in the notes; no invented intro/conclusion/roadmap and no split of one claim into several headings
 - Draft voices: conversational, professional, analytical. `VOICE_FOR_STYLE` maps economist and strunk-white to analytical, monocle to conversational, professional to professional
-- Drafts cover every note and stop when notes are covered; no closing paragraph
-- `extendDraft` unpacks factual note paragraphs (`>= 15` words) one at a time; `acceptExpansion` requires overlap with the source note and rejects off-topic text
+- Drafts cover every note, say each fact once, and stop when notes are covered; no closing paragraph
+- `extendDraft` unpacks factual note paragraphs (`>= 15` words) one at a time; `acceptExpansion` requires overlap with the source note, rejects off-topic text, and rejects an expansion that repeats the draft (`repeatsDraft`)
 - Missing API key: heuristic outline and stub drafts, no network
 
 ## Work Guidance
 
 - Change prompts and acceptance rules together; tests assert the prompt strings
+- In `Writer`, keep tool `run` bodies and optional chaining in module-level functions. `deno lint` (react-rules-of-hooks) reads an early `return` or `?.` in the agent body as a conditional hook call
 - Do not reintroduce length padding in the draft prompt; length is the extend step's job
 - `extendToTarget` is the generic loop; `extendDraft` is the note-grounded production path used by `main.ts`
 
