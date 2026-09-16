@@ -1,7 +1,7 @@
 # RFC 0001: Align writing stages with an AI-era publishing workflow
 
 - Status: Draft
-- Date: 2026-09-17 (updated 2026-09-17 with the pet-cat run findings, and a Phase 0 redesign based on the full HaiMaker docs)
+- Date: 2026-09-17 (updated 2026-09-17: pet-cat findings, Phase 0 based on the HaiMaker docs, and peer review changes)
 - Author: Stew Milne
 - Scope: `src/workflow.ts`, `src/main.ts`, `src/complete.ts`, `src/providers.ts`, `src/notes.ts`, `src/agents/write.ts`, `src/agents/writer.ts`, `src/skills/`, `src/contract.ts`, `islands/WriteForm.tsx`
 
@@ -9,7 +9,7 @@
 
 The pipeline does reporting well and keeps essays to facts in the notes. It is thin on editing, has no checks or approvals before publication, and runs two stages in the wrong order.
 
-A real run showed the cost of those gaps. `output/essay-on-my-pet-cat.md` cost $0.51 on Gemini 3.5 Flash, and 95% of that paid for hidden reasoning. The essay was about essay-sample websites, repeated itself, and contained the model's word-counting scratch work.
+A real run showed the cost of those gaps. `output/essay-on-my-pet-cat.md` cost $0.51 on Gemini 3.5 Flash. Hidden reasoning was 95% of the output tokens and about $0.46 (90%) of the cost. The essay was about essay-sample websites, repeated itself, and contained the model's word-counting scratch work.
 
 This RFC maps each stage to a traditional publishing workflow and records that evidence. It proposes guards on cost and truncated output first, built on HaiMaker's documented features (catalog, usage, spend logs, key budgets, auto router) rather than app code. Then it proposes an order that keeps the notes-only rule. That order adds a separate editor and fact-checker, citations, and human approval points.
 
@@ -57,13 +57,15 @@ Topic: "essay on my pet cat". Style: economist. Model: `google/gemini-3.5-flash`
 
 ### Cost
 
-Taken from HaiMaker's `/spend/logs`:
+Taken from HaiMaker spend logs (queried at the undocumented `/spend/logs`; `/spend/logs/v2` is the documented endpoint). Cost is input tokens at $1.50/M plus output tokens (including reasoning) at $9.00/M, which matches the logged `spend`:
 
-| Stage | Calls | Output tokens | Of which reasoning | Cost |
-|---|---|---|---|---|
-| Outline, 3 drafts, style | 5 | 10,225 | 9,122 (89%) | $0.102 |
-| Extend | 11 | 43,356 | 41,870 (97%) | $0.409 |
-| **Total** | **16** | **53,581** | **50,992 (95%)** | **$0.511** |
+| Stage | Calls | Input tokens | Output tokens | Of which reasoning | Cost |
+|---|---|---|---|---|---|
+| Outline, 3 drafts, style | 5 | 6,554 | 10,225 | 9,122 (89%) | $0.102 |
+| Extend | 11 | 12,977 | 43,356 | 41,870 (97%) | $0.409 |
+| **Total** | **16** | **19,531** | **53,581** | **50,992 (95%)** | **$0.511** |
+
+Output alone is $0.482 (94% of the cost); input is $0.029.
 
 Earlier whole-essay runs on `google/gemini-3.1-flash-lite` cost about $0.01 each.
 
@@ -73,7 +75,7 @@ Earlier whole-essay runs on `google/gemini-3.1-flash-lite` cost about $0.01 each
 |---|---|---|
 | 1 | Word-counting scratch work in the essay (`(66) "cat" (67) "and"…`, "wait, hyphenated word") | 10 of 11 extend calls hit `max_tokens` (4096) after about 3,930 reasoning tokens. They returned `finish_reason: "length"` with the tail of the reasoning as content. `streamChat` accepted it. `fitExtension` trims to the last full stop, and "85. two" has one. `acceptExpansion` passed it (reproduced: 139 words, accepted). |
 | 2 | Essay describes essay-sample websites ("School Essay Writer published…", "the first essay contains 200 words") | The search returns essay mills. Their descriptions of their own pages become notes. `extendDraft` expands every note paragraph, including the `Source:` / `URL:` listings. |
-| 3 | The same paragraph four times | `repeatsDraft` only flags text with fewer than 4 new content words, and a reworded repeat has more (reproduced for two pairs). |
+| 3 | Near-duplicate paragraphs: two reworded pairs (lines 21/93 and 97/99), and line 101 repeats facts from 93 | `repeatsDraft` only flags text with fewer than 4 new content words, and a reworded repeat has more (reproduced for two pairs). |
 | 4 | Paragraph starts mid-sentence ("show how cats act as pets.") | `fitExtension` trims the end of a reply, never the start. |
 | 5 | ~680 of 935 words are padding | Drafts stop when the notes are covered, so extend fills to 900 words from weak notes, after the style pass. |
 | 6 | Title twice, plus `## Style: economist` | The draft includes its own `#` title, and `workflow.ts` adds a heading and the style line on top. |
@@ -112,8 +114,8 @@ Phase 0 must use what HaiMaker already provides rather than rebuild it. Each nee
 |---|---|---|
 | Model list, prices, capabilities | `GET /public/model_hub` (no key): `input_cost_per_token`, `output_cost_per_token`, `supports_reasoning`, `supported_openai_params`, `max_output_tokens`, `mode`, `health_status`. `GET /v1/models` lists the models this key can call. "The model catalog changes independently of the docs." | Getting started |
 | Bound output **including reasoning** | `max_completion_tokens`: "an upper bound for the number of tokens that can be generated for a completion, including visible output tokens and reasoning tokens". | Chat Completions input |
-| Reasoning level | `reasoning_effort`: `low` / `medium` / `high`. For Anthropic, `thinking: {type: "enabled", budget_tokens}`. Reasoning text comes back separately as `reasoning_content`, never in `content`. | Thinking / Reasoning Content |
-| Turn Gemini thinking off | HaiMaker accepts Gemini `generateContent` at `/v1beta/models/{model}:generateContent`, with `streamGenerateContent` for streaming. The model id is URL-encoded (`google%2Fgemini-2.5-flash`). Gemini's own `generationConfig.thinkingConfig` is the provider-documented control. | Gemini generateContent |
+| Reasoning level | `reasoning_effort`: `low` / `medium` / `high`. For Anthropic, `thinking: {type: "enabled", budget_tokens}`. The response carries reasoning in a separate `reasoning_content` field. The docs do not say reasoning can never appear in `content`. | Thinking / Reasoning Content |
+| Turn Gemini thinking off | HaiMaker accepts Gemini `generateContent` at `/v1beta/models/{model}:generateContent`, with `streamGenerateContent` for streaming. The model id is URL-encoded (`google%2Fgemini-2.5-flash`). The HaiMaker page does not mention `thinkingConfig`. Gemini's own `generationConfig.thinkingConfig` is Google's control, and passthrough is untested (Phase 2 item 8). | Gemini generateContent |
 | Which endpoint to call | Chat Completions (`POST /v1/chat/completions`) serves catalog entries with `mode: "chat"`. The Responses API (`POST /v1/responses`) is only for entries with `mode: "responses"`: "Do not assume a chat model is also a Responses model." Every model in the picker is `mode: "chat"`, so the pipeline stays on Chat Completions. The catalog `mode` decides the endpoint for any model added later. | Responses API |
 | Anthropic thinking control | Anthropic Messages at `POST /v1/messages`, with Anthropic's documented `thinking` block. | Anthropic Messages |
 | Per-call tokens | `stream_options: {include_usage: true}` adds a final usage chunk: `prompt_tokens`, `completion_tokens`, `prompt_tokens_details.cached_tokens`, `completion_tokens_details.reasoning_tokens`. | Usage, Prompt Caching |
@@ -130,8 +132,8 @@ Phase 0 must use what HaiMaker already provides rather than rebuild it. Each nee
 Consequences for the pipeline:
 
 - **Cut-off replies.** A reasoning model that hits `max_tokens` returns `finish_reason: "length"`, which the pet-cat run shows. The fix is to set `max_completion_tokens` and reject `length`, not to raise the cap.
-- **The scratch work in the essay came back as `content`**, even though HaiMaker says reasoning is returned as `reasoning_content`. Only `content` may be used as copy. Whether truncated reasoning leaks into `content` is a question for HaiMaker support.
-- **The hard-coded model list and prices in `src/providers.ts` duplicate the catalog.** Read `supports_reasoning` and prices from `/public/model_hub`, and filter to the models `/v1/models` allows for the key.
+- **`content` is not guaranteed to be clean copy.** The scratch work in the essay came back in `content` from calls that ended with `finish_reason: "length"`, and `streamChat` returns `content` without checking `finish_reason` (`src/complete.ts:78`, `src/complete.ts:140`). The docs show `reasoning_content` as a separate field, but do not promise reasoning never reaches `content`. The guard is to reject `length`, plus the Phase 1 prose checks, not to trust `content`.
+- **The hard-coded model ids and labels in `src/providers.ts` duplicate the catalog, and `src/agents/writer.ts` sets every cost to zero and `reasoning: false`.** Read `supports_reasoning` and prices from `/public/model_hub`, and filter to the models `/v1/models` allows for the key.
 - **Research stays on Tavily for now; web search is a decision to make.** The HaiMaker web search docs describe only the model's written answer, with no documented source list or citations. Feeding that answer into the notes breaks the notes-only rule (`AGENTS.md`: Tavily must not feed a synthesized answer into notes), and `src/AGENTS.md` forbids extra research providers. A later use that fits the rule is a fact-check lookup, where search confirms or rejects a claim that is already in the draft and never adds facts. That needs the rule changed and a check of whether responses carry citations.
 - **The Flue `Writer` agent already uses function calling** (`search_notes`, `read_page`, `save_essay` through pi-ai's `openai-completions` API). Under `haimaker/auto`, capability detection limits its requests to models with `supports_function_calling`. Its model list should come from the catalog filtered on that flag.
 
@@ -143,7 +145,7 @@ How it works:
 
 - `model: "haimaker/auto"`. **The response `model` field is the model that actually handled the request.** Routing is deterministic, with no LLM in the request path.
 - It runs in order:
-  1. **Capability detection.** A `response_format.type` of `json_schema` needs `supports_response_schema`; a long context needs `max_input_tokens` with a 10% buffer.
+  1. **Capability detection.** A `response_format.type` of `json_schema` filters on `supports_response_schema`, a router-internal flag that `/public/model_hub` does not expose; a long context needs `max_input_tokens` with a 10% buffer.
   2. **Example rules.** 3–10 example prompts plus a `target_model`. The router embeds the **last user message** and matches it to each rule's examples by cosine similarity, above `match_threshold` (default 0.80). Rules can also require capabilities or match the first turn only.
   3. **The default model.**
   4. **The cheapest capable model** as a fallback.
@@ -176,7 +178,8 @@ Target order:
 brief → research → outline (+ human approval) → one draft in the target voice
 → structural edit (different model) → fact-check against sources, add citations
 → line/house-style edit (length fitted here)
-→ headline + standfirst → proofread → human approval → publish (version + source list)
+→ headline + standfirst → legal / originality check → proofread → human approval
+→ publish (version + source list) → corrections
 ```
 
 ### Principles
@@ -186,22 +189,35 @@ brief → research → outline (+ human approval) → one draft in the target vo
 - Every published claim traces to a source URL in the notes.
 - A person approves before anything is published.
 - Use the provider's documented features before building our own: catalog, usage, spend logs, key budgets, auto router.
-- A run's cost is known and shown, and spending is bounded by HaiMaker key budgets. A reply that was cut off is never used as copy.
+- A run's cost is known and shown. Call caps bound each run, and HaiMaker key budgets set a ceiling for the key. A reply that was cut off is never used as copy.
 
 ## Phased plan
 
-### Phase 0: cost and output guards, using documented HaiMaker features (approved 2026-09-17; revised to follow the docs)
+### Phase 0: cost and output guards, using documented HaiMaker features (approved 2026-09-17; revised after peer review)
 
-1. **Reject cut-off replies.** Send `max_completion_tokens` (the cap that includes reasoning) instead of `max_tokens`. Treat `finish_reason: "length"` as a failure: extend and style discard the reply, and outline and drafts surface an error. Use only `content` as copy, never `reasoning_content`.
+Items 1–7 do not depend on moving notes into the system message. What each item does:
+
+- **Item 1 stops junk copy**, but only after the tokens are billed.
+- **Items 3 and 4 stop the call blow-up.** The 11 extend calls come from looping every note paragraph for up to 3 rounds (`src/agents/write.ts:308`).
+- **Item 7 is only a ceiling on the key**, not a limit per run.
+
+1. **Reject cut-off replies.** Send `max_completion_tokens` (the cap that includes reasoning) instead of `max_tokens`. Treat `finish_reason: "length"` as a failure: extend and style discard the reply, and outline and drafts surface an error. Do not treat `content` as safe copy on its own; the Phase 1 prose checks still apply.
 2. **Read the catalog, not a hard-coded list.** Load `/public/model_hub` for prices, `supports_reasoning`, `supported_openai_params`, and `max_output_tokens`, and intersect it with `/v1/models` for the key. Keep a short curated list of ids for the picker; the labels, prices, and reasoning flag come from the catalog.
-3. **Control reasoning only through documented parameters.** Send `reasoning_effort` only when the catalog lists it in `supported_openai_params`, and only with documented values. For no reasoning, prefer models that do not reason by default. Gemini native thinking control through `generateContent` is Phase 2 work, after a check that HaiMaker passes `thinkingConfig` through.
-4. **Stop extend early**, after 3 consecutive rejected expansions.
-5. **Record usage and cost.** Request `stream_options.include_usage`. Log prompt, cached, output, and reasoning tokens per stage. Show an **estimate** during the run, from catalog prices. At the end, show the **actual** cost from `GET /key/info` (`spend` after the run minus before), or from `/spend/logs/v2` entries for the run's time window. Label the two as estimate and actual.
+3. **Control reasoning only through documented parameters.** Send `reasoning_effort` only when the catalog lists it in `supported_openai_params`, and only with documented values. For no reasoning, prefer models that do not reason by default.
+4. **Bound extend's calls.** Stop after 3 consecutive rejected expansions, and cap the total extend calls per run.
+5. **Record usage and cost per run.** Request `stream_options.include_usage`, and log prompt, cached, output, and reasoning tokens per stage. Show an **estimate** during the run, from catalog prices. For the **actual** cost, set the documented Chat Completions `user` field to a run id on every call, then sum the `/spend/logs/v2` rows carrying that id for the run's dates. Label the two as estimate and actual.
+   - `/key/info` before-and-after and time windows are rejected: both mix runs that overlap.
+   - The docs name `user` ("a unique identifier representing your end-user"), but the public docs do not say which spend-log field records it. The live auto-router page documents `/spend/logs/v2` with only `start_date`, `end_date`, `page`, and `page_size`. A spend-tracking page outside the public doc set (`/docs/proxy/cost_tracking`, now 404) said the request `user` is stored as spend-log `end_user`, and that the log's `user` is the key owner. It also showed a `/spend/logs/v2?end_user=` filter. Neither is a contract: make one tagged call and look for the run id in `end_user`, not `user`, before relying on it. Until then, ship the estimate only.
 6. **Label the picker** with catalog data, e.g. "Gemini 3.5 Flash · reasons by default · $9/M out".
-7. **Bound spending with key settings, not app code.** Use a dedicated service account key for the writer, with `max_budget` + `budget_duration`, a `soft_budget` alert, and a `models` allowlist matching the picker. Optionally set `model_max_budget` for expensive models. Document the setup in `.env.example` and `README.md`.
-8. **Offer `haimaker/auto` in the picker.** Show the routed model per stage from the response `model` field, and actual cost from spend logs.
+7. **Set a key ceiling.** Use a dedicated service account key for the writer, with `max_budget` + `budget_duration`, a `soft_budget` alert, and a `models` allowlist matching the picker. Optionally set `model_max_budget` for expensive models. Document the setup in `.env.example` and `README.md`.
+8. **Fix repo docs that contradict the docs or the code.**
+   - `README.md` provider section: `FAST_MODEL_ID=haimaker/auto` with `FAST_MODEL_KEY`. The code reads `HAIMAKER_API_KEY`, and `haimaker/auto` errors without a router.
+   - Replace `HAIMAKER.md`, which predates the integration.
+   - Update the root rule "Fast model drafts; reasoning model outlines" (`AGENTS.md:89`): one chosen model now runs every stage.
 
 ### Phase 1: cheap quality fixes, no new stages (approved 2026-09-17, except items 7–9)
+
+Items 1–5 can ship after Phase 0. Item 6 needs Phase 0's usage log (item 5), not Phase 2.
 
 1. Reject expansions that are not prose: numbered or bulleted lines, scratch-work phrases ("let's count", "wait,"), and text that does not start with a capital letter. Add a test using the pet-cat scratch work.
 2. Detect repeats against every existing paragraph by shared-word ratio, not a count of new words.
@@ -218,10 +234,11 @@ brief → research → outline (+ human approval) → one draft in the target vo
 1. Add a `factcheck` stage to `WRITE_STAGES` in `src/contract.ts` and to the form's stage list.
 2. Split the draft into claims. Match each claim to a note excerpt and its URL, using a model other than the writer's.
 3. Cut or flag unsupported claims. Emit a source list and inline citations.
-4. Route stages through a repo-managed auto router. Move notes and drafts into the system message, and make each stage's user message a short instruction. Keep the router definition (default model, one rule per stage with 3–10 example instructions, target models, `capture_enabled`, `auto_apply_enabled`) in a versioned file. Apply it with the Management API, and check it with `/auto-router/{id}/simulate` in verification.
-5. Use `response_format` `json_schema` for the outline instead of parsing JSON out of free text.
-6. Order prompts so the notes are a shared prefix, for prompt caching. Add `cache_control` for Anthropic models, and report `cached_tokens`.
-7. Test native reasoning controls: Gemini `thinkingConfig` through `/v1beta/models/{model}:generateContent`, and Anthropic `thinking` through `/v1/messages`.
+4. Offer `haimaker/auto` in the picker (moved from Phase 0: it errors when the key has no router, and stage routing needs the prompt change below). Show the routed model per stage from the response `model` field. An earlier step is a router with only a default model and no stage rules.
+5. Route stages through a repo-managed auto router. Move notes and drafts into the system message, and make each stage's user message a short instruction. Keep the router definition (default model, one rule per stage with 3–10 example instructions, target models, `capture_enabled`, `auto_apply_enabled`) in a versioned file. Apply it with the Management API, and check it with `/auto-router/{id}/simulate` in verification.
+6. Use `response_format` `json_schema` for the outline instead of parsing JSON out of free text.
+7. Order prompts so the notes are a shared prefix, for prompt caching. Add `cache_control` for Anthropic models, and report `cached_tokens`.
+8. Test native reasoning controls: Gemini `thinkingConfig` through `/v1beta/models/{model}:generateContent` (the HaiMaker page does not mention `thinkingConfig`), and Anthropic `thinking` through `/v1/messages`.
 
 ### Phase 3: brief, packaging, approval
 
@@ -238,7 +255,8 @@ brief → research → outline (+ human approval) → one draft in the target vo
 - **Remove reasoning models from the picker.** Simple, but it hides useful models. Per-model reasoning settings plus cost display keep them usable.
 - **Raise `max_tokens` so reasoning models finish.** It avoids truncation, but pays for more hidden reasoning. The pet-cat run already cost 50x a Flash Lite run.
 - **Use `haimaker/auto` as the only model.** It needs less code, but routing by stage needs the prompt restructuring above first, and cost is only known after each call.
-- **Build a per-run budget in the app.** Rejected: key `max_budget`, `soft_budget`, and `model_max_budget` already enforce limits at HaiMaker.
+- **Rely on key budgets for per-run limits.** Rejected: `max_budget` is a ceiling on the key, not a limit per run. The per-run bound is the call caps in Phase 0 items 1 and 4.
+- **Actual cost from `/key/info` before and after, or a time window of spend logs.** Rejected: both mix overlapping runs. Tag calls with `user` instead.
 - **Compute authoritative cost from catalog prices.** Rejected: HaiMaker says catalog prices are reference prices, and billing is authoritative. Catalog prices are for estimates only.
 - **Turn off reasoning with undocumented `reasoning_effort` values (`none`, `minimal`).** Rejected: not in the HaiMaker contract, and the results differ by model.
 - **Replace Tavily with HaiMaker web search.** Rejected for the notes: the documented output is a model answer with no documented citations, which the notes-only rule forbids. A fact-check use stays open (see open questions).
@@ -249,7 +267,8 @@ brief → research → outline (+ human approval) → one draft in the target vo
 - What citation format suits the target publications: inline links, footnotes, or a source list?
 - Where does human approval live for the CLI: an interactive prompt or a saved draft to approve later?
 - Does length fitting belong in the line edit (cut to fit) or in the structural edit?
-- For HaiMaker support: should truncated reasoning ever appear in `content` rather than `reasoning_content`, as it did in the pet-cat run?
+- For HaiMaker support: should truncated reasoning ever appear in `content` rather than `reasoning_content`, as it did in the pet-cat run? (Not blocking: Phase 0 rejects `length`.)
+- Does the request `user` land in spend-log `end_user`, and does `/spend/logs/v2?end_user=` filter by it? (Blocks only the actual-cost half of Phase 0 item 5; the estimate can ship. Verify with one tagged call.)
 - Does HaiMaker pass Gemini `thinkingConfig` through `generateContent`, and Anthropic `thinking` through `/v1/messages`?
 - Should HaiMaker web search be allowed for fact-check lookups only (never as notes)? This needs the `AGENTS.md` research rules changed, and a check of whether search responses include citations.
 - Which target model should each stage's router rule use, and should `capture_enabled` and `auto_apply_enabled` stay on?
