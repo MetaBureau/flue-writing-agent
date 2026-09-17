@@ -261,6 +261,43 @@ export function titleKey(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function titleWords(title: string): string[] {
+  return [...new Set(
+    titleKey(title).split(" ").filter((word) =>
+      word.length > 2 && !STOP_WORDS.has(word)
+    ),
+  )];
+}
+
+export function samePublication(
+  a: { title: string; url: string },
+  b: { title: string; url: string },
+): boolean {
+  if (!a.url || !b.url) return false;
+  if (canonicalUrl(a.url) === canonicalUrl(b.url)) return true;
+  const titleA = titleKey(a.title);
+  const titleB = titleKey(b.title);
+  if (titleA && titleA === titleB) return true;
+  if (hostOf(a.url) !== hostOf(b.url) || !titleA || !titleB) return false;
+  const wordsA = titleWords(a.title);
+  const wordsB = titleWords(b.title);
+  if (wordsA.length === 0 || wordsB.length === 0) return false;
+  const other = new Set(wordsB);
+  const overlap = wordsA.filter((word) => other.has(word)).length;
+  const need = Math.max(
+    3,
+    Math.ceil(Math.min(wordsA.length, wordsB.length) * 0.7),
+  );
+  return overlap >= need;
+}
+
+function alreadyHavePublication(
+  have: readonly { title: string; url: string }[],
+  item: { title: string; url: string },
+): boolean {
+  return have.some((existing) => samePublication(existing, item));
+}
+
 export function hostOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
@@ -357,6 +394,7 @@ export function mergeHits(base: SearchHit[], extra: SearchHit[]): SearchHit[] {
     const url = canonicalUrl(hit.url);
     const title = titleKey(hit.title);
     if (urls.has(url) || (title && titles.has(title))) continue;
+    if (alreadyHavePublication(next, hit)) continue;
     urls.add(url);
     if (title) titles.add(title);
     next.push(hit);
@@ -461,12 +499,11 @@ export function mergeArticles(
   extracted: Article[],
   fallback: Article[],
 ): Article[] {
-  const seen = new Set(extracted.map((article) => canonicalUrl(article.url)));
   const next = [...extracted];
   for (const article of fallback) {
-    const key = canonicalUrl(article.url);
-    if (seen.has(key) || isBlockedSource(article.url)) continue;
-    seen.add(key);
+    if (isBlockedSource(article.url) || alreadyHavePublication(next, article)) {
+      continue;
+    }
     next.push(article);
   }
   return next;
@@ -488,14 +525,16 @@ export function articlesFromExtract(
     const key = canonicalUrl(url);
     if (seen.has(key) || isBlockedSource(url)) continue;
     const hit = byUrl.get(key);
-    seen.add(key);
-    articles.push({
+    const article = {
       url: hit?.url ?? url,
       title: hit?.title ||
         (typeof item.title === "string" ? item.title : url),
       text,
       publishedAt: hit?.publishedAt ?? "",
-    });
+    };
+    if (alreadyHavePublication(articles, article)) continue;
+    seen.add(key);
+    articles.push(article);
   }
   return articles;
 }
@@ -721,8 +760,9 @@ export async function supplementResearch(
     hits,
     limit,
   );
-  const known = new Set(current.articles.map((article) => canonicalUrl(article.url)));
-  const fresh = hits.filter((hit) => !known.has(canonicalUrl(hit.url)));
+  const fresh = hits.filter((hit) =>
+    !alreadyHavePublication(current.articles, hit)
+  );
   const extracted = fresh.length > 0
     ? await extractArticles(fresh, limit).catch((error) => {
       const message = error instanceof Error ? error.message : "request failed";
@@ -742,12 +782,9 @@ export function mergeNotes(
   base: readonly SourceNote[],
   extra: readonly SourceNote[],
 ): SourceNote[] {
-  const urls = new Set(base.map((note) => canonicalUrl(note.url)));
   const next = [...base];
   for (const note of extra) {
-    const key = canonicalUrl(note.url);
-    if (urls.has(key)) continue;
-    urls.add(key);
+    if (alreadyHavePublication(next, note)) continue;
     next.push({ ...note, id: `n${next.length + 1}` });
   }
   return next;

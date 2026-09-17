@@ -13,8 +13,9 @@ notes, run plan → draft → critic, write `output/<slug>.md`.
 - `cite.ts` — citation, copy, quote-budget, and Layer 1 harness. Rejects an uncited
   figure or quote, a citation to a missing note, an unquoted 8-word phrase
   with three distinctive words, quoted words over 15% of the body, a Sources
-  list that does not match cited ids, and a URL, markdown link, or call to
-  action in the body. A year in the brief, or used as the essay's timeframe,
+  list that does not match cited ids, a URL, markdown link, or call to
+  action in the body, and a sentence that names "the notes", "the sources",
+  or "this essay". A year in the brief, or used as the essay's timeframe,
   is not a figure
 - `critic.ts` — one review against the eight RFC 0003 rubric items; passage-level
   fixes; sidecar records only remaining issues after revise
@@ -65,7 +66,8 @@ and style catalogs.
   not label a model as reasoning by default from a trial table
 - Research searches `researchQuery(brief)` plus `counterQuery(brief)`. Advanced
   search. No synthesized answer, no search `raw_content`. Deduplicate by
-  canonical URL and title. Block mill domains, content farms, and Facebook,
+  canonical URL, title, and same-publisher similar title (HTML and PDF of one
+  report count as one). Block mill domains, content farms, and Facebook,
   Twitter, Reddit, Instagram, and TikTok. Extract `extractLimitFor(words)` hits
   in full (`TAVILY_EXTRACT_URL`). HTTP or network failure continues with the topic
   only. Extract HTTP failure or empty extract uses search snippets so notes
@@ -104,11 +106,12 @@ and style catalogs.
   RFC 0003 rubric items (claim, advance, objection, fidelity, voice, audience,
   takeaway, silence). The critic review and the harness merge; harness findings
   are not dropped when the critic also returns issues. After two revise
-  passes, leftover copied phrases are quoted in place only if that stays under
+  passes,   leftover copied phrases are quoted in place only if that stays under
   the quote budget. The sidecar records only remaining issues. Leftover Layer
   1 problems block the save. Saving outside 85%–115% of the target fails.
-  Save strips body links, URLs, and calls to action. `## Sources` is built
-  from cited note ids
+  Save strips body links, URLs, and calls to action. A sentence that names
+  "the notes", "the sources", or "this essay" is a harness fail. `## Sources`
+  is built from cited note ids
 - Style names still exist. They go into the draft prompt. There is no style
   rewrite pass
 - Dry run prints config and does not call models or Tavily beyond the

@@ -52,11 +52,11 @@ import {
 } from "./critic.ts";
 import { topicSlug, writeOutputFile } from "./output.ts";
 import {
-  canonicalUrl,
   formatAttributedNotes,
   gatherResearch,
   mergeNotes,
   noteFloor,
+  samePublication,
   supplementResearch,
   type Article,
   type ResearchNotes,
@@ -124,9 +124,8 @@ async function fillNotes(
   meter: RunMeter,
   writerParams: readonly string[] | undefined,
 ): Promise<SourceNote[]> {
-  const known = new Set(existing.map((note) => canonicalUrl(note.url)));
   const fresh = articles.filter((article) =>
-    !known.has(canonicalUrl(article.url))
+    !existing.some((note) => samePublication(note, article))
   );
   if (fresh.length === 0) return [...existing];
   const extra = await extractSourceNotes(

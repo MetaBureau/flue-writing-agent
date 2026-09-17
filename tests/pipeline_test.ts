@@ -51,6 +51,7 @@ import {
   citationProblems,
   copyProblems,
   groundingProblems,
+  processProblems,
   quoteCopiedPhrases,
   quoteProblems,
   quoteShare,
@@ -97,10 +98,12 @@ import {
   isBlockedSource,
   isEncyclopaediaOrLiveBlog,
   mergeHits,
+  mergeNotes,
   noteFloor,
   outletMatchesDomain,
   relevantToQuery,
   researchBudget,
+  samePublication,
   searchQuery,
   sourceNotes,
   sourceNotesFromUnknown,
@@ -486,6 +489,47 @@ Deno.test("facebook posts, content farms, and title mirrors are dropped", () => 
   assertEquals(merged.length, 1);
   assertEquals(canonicalUrl("http://www.Example.com/story/"), "https://example.com/story");
   assertEquals(titleKey("Labor Donations!"), "labor donations");
+  const html = {
+    title: "The Global State of Democracy 2026: Democracy in an Age of Conflict",
+    url:
+      "https://www.idea.int/publications/catalogue/html/global-state-democracy-2026-democracy-age-conflict",
+    content:
+      "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen",
+  };
+  const pdf = {
+    title: "the-global-state-of-democracy-2026-democracy-in-an-age-of-conflict.pdf",
+    url:
+      "https://www.idea.int/sites/default/files/2026-09/the-global-state-of-democracy-2026-democracy-in-an-age-of-conflict.pdf",
+    content:
+      "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen",
+  };
+  assertEquals(samePublication(html, pdf), true);
+  assertEquals(mergeHits([html], [pdf]).length, 1);
+  assertEquals(
+    mergeNotes(
+      [{
+        id: "n1",
+        url: html.url,
+        title: html.title,
+        author: "",
+        outlet: "International IDEA",
+        date: "2026",
+        stance: "",
+        claims: [],
+      }],
+      [{
+        id: "n2",
+        url: pdf.url,
+        title: pdf.title,
+        author: "",
+        outlet: "International IDEA",
+        date: "2026",
+        stance: "",
+        claims: [],
+      }],
+    ).length,
+    1,
+  );
 });
 
 Deno.test("extract payload keeps full article text", () => {
@@ -883,6 +927,27 @@ Deno.test("system message still splits the Anthropic cache prefix", () => {
     true,
   );
   assertEquals(groundingProblems("No figures here.", [], []).length, 0);
+});
+
+Deno.test("process harness rejects a sentence about the notes or this essay", () => {
+  assertEquals(
+    processProblems(
+      "Malaysia's political institutions and history differ substantially from Australia's, and the notes available offer no direct link between Malaysian elite dynamics and Australian ones.",
+    ).length > 0,
+    true,
+  );
+  assertEquals(
+    processProblems(
+      "The notes available do not quantify precisely how much of current price growth is attributable to migration versus construction shortfalls, and this essay does not claim a precise causal split.",
+    ).length > 0,
+    true,
+  );
+  assertEquals(
+    processProblems(
+      "Housing affordability has hit a record low, with buyers squeezed out of the market.",
+    ),
+    [],
+  );
 });
 
 Deno.test("a brief without a purpose defaults to persuading the audience of the claim", () => {

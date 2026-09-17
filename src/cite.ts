@@ -273,6 +273,20 @@ export function quoteProblems(essay: string): string[] {
   ];
 }
 
+export function processProblems(essay: string): string[] {
+  const problems: string[] = [];
+  for (const sentence of sentencesOf(essay)) {
+    if (
+      /\bthe notes\b/i.test(sentence) ||
+      /\bthe sources\b/i.test(sentence) ||
+      /\bthis essay\b/i.test(sentence)
+    ) {
+      problems.push(`process sentence in the body: ${sentence.slice(0, 80)}`);
+    }
+  }
+  return [...new Set(problems)];
+}
+
 export function groundingProblems(
   essay: string,
   notes: readonly SourceNote[],
@@ -283,6 +297,7 @@ export function groundingProblems(
     ...citationProblems(essay, notes, brief),
     ...copyProblems(essay, articles),
     ...quoteProblems(essay),
+    ...processProblems(essay),
   ];
 }
 
@@ -335,7 +350,7 @@ export function bodyLinkProblems(essay: string): string[] {
       problems.push(`call to action in the body: ${sentence.slice(0, 80)}`);
     }
   }
-  return [...new Set(problems)];
+  return [...new Set([...problems, ...processProblems(body)])];
 }
 
 export function layer1Score(
@@ -374,7 +389,7 @@ export function layer1Problems(
     quotes: "quoted words over 15% of the body",
     length: "body length outside 85–115% of the target",
     sources: "Sources list does not match cited notes",
-    body: "URL, markdown link, or call to action in the body",
+    body: "URL, markdown link, call to action, or process sentence in the body",
   };
   return LAYER1_IDS.filter((id) => !score[id]).map((id) => labels[id]);
 }

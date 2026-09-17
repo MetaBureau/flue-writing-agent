@@ -21,11 +21,13 @@ Deterministic checks for pipeline helpers and prompt contracts. No live model or
   copy harness rejects an 8-word shared phrase with three distinctive words
   unless it is quoted; wrapping leftover copied phrases in quotes clears the
   harness when that stays under a 15% quote budget; a literature-review quote
-  share fails
+  share fails; a sentence that names "the notes", "the sources", or
+  "this essay" fails; HTML and PDF of one report on the same publisher
+  count as one source
 - Assert research ignores a synthesized `answer` and search `raw_content`,
   extracts full article text, falls back to search snippets, drops Facebook,
-  content farms, and title mirrors, matches outlet to the URL domain, and
-  includes a counter query
+  content farms, title mirrors, and same-publisher HTML/PDF twins, matches
+  outlet to the URL domain, and includes a counter query
 - Assert a 500-word plan keeps at most three sections and strips Introduction
   and Conclusion labels; a brief without a claim asks the plan to propose one;
   a brief without a purpose defaults to persuading the audience
