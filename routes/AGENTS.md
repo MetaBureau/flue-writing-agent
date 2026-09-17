@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Fresh screens for the writing test: prompt interview, topic, length, style, provider, writer model, checker model, then the saved essay.
+Fresh screens for the writing test: prompt interview, topic, length, style, three writer radios, then the saved essay.
 
 ## Ownership
 
@@ -15,13 +15,12 @@ Fresh screens for the writing test: prompt interview, topic, length, style, prov
 ## Local Contracts
 
 - Styles are `STYLE_NAMES` from `src/skills/styles.ts`
-- Providers are the keys of `PROVIDERS`. Picker ids stay in each provider's `models`. HaiMaker labels, prices, and the reasoning flag come from the model hub when that fetch succeeds
-- If the HaiMaker key's model list shares no picker id, the picker is empty and the form shows a warning. Do not show the curated list in that case
+- The page does not load the model hub. Writer radios are `WRITER_OPTIONS`. The form posts that option's provider and model, and does not post `checkModel`
 - A model not in the chosen provider's `models` is HTTP 400 JSON `{ error }`
-- `checkModel` must be a HaiMaker picker id. The route passes it to `writeStages`. The checker uses `HAIMAKER_API_KEY` even when the writer is Mercury. Without that key, fact-check is skipped and the essay is still saved. A checker auth or rate-limit error yields the essay, then a fact-check error
-- The stream yields `{ type: "error" }` if the essay body is below `essayLengthFloor`. That body count excludes the Sources list.
+- Optional `checkModel` must be a HaiMaker picker id. The form does not send one, so the critic uses the writer. Without a writer key the run fails
+- The stream yields `{ type: "error" }` if the essay body is outside 85%–115% of the request. Leftover harness problems after two revise passes save as a critic warning
 - A write streams `text/event-stream`: stage events, `{ type: "piece", piece }`
-  for notes, each draft, synthesis, a brief revision when one is kept, and the essay, then
+  for notes, plan, draft, critic, and the essay, then
   `{ type: "essay", markdown, filename }`, or `{ type: "error" }`
 - `/api/prompt` takes `provider`, `model`, `seed`, `turns`, and optional `force`. It returns `{ status: "ask", question }` or `{ status: "ready", prompt }`. An empty subject, unknown provider, or unknown model is HTTP 400 JSON `{ error }`. At most five answers. The prompt may use only what the user said
 

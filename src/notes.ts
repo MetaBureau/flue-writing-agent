@@ -1,11 +1,14 @@
 import { DEFAULT_ESSAY_LENGTH } from "./contract.ts";
 
 export const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
+export const TAVILY_EXTRACT_URL = "https://api.tavily.com/extract";
 export const MAX_SOURCES = 5;
 export const EXCERPT_WORDS = 180;
 export const MAX_RESEARCH_SOURCES = 12;
 export const MAX_EXCERPT_WORDS = 400;
 export const MAX_SEARCH_RESULTS = 20;
+export const EXTRACT_LIMIT = 8;
+export const MIN_ARTICLE_CHARS = 400;
 
 const MILL_DOMAINS = [
   "bartleby.com",
@@ -22,6 +25,70 @@ const MILL_DOMAINS = [
   "youtube.com",
   "www.youtube.com",
 ];
+
+const SOCIAL_DOMAINS = [
+  "facebook.com",
+  "fb.com",
+  "m.facebook.com",
+  "instagram.com",
+  "reddit.com",
+  "tiktok.com",
+  "twitter.com",
+  "x.com",
+];
+
+const FARM_DOMAINS = [
+  "a-z-animals.com",
+  "animalwised.com",
+  "curacao-nature.com",
+  "differencebetween.com",
+  "differencebetween.net",
+  "ehow.com",
+  "factanimal.com",
+  "frogdetails.com",
+  "hubpages.com",
+  "listverse.com",
+  "mramphibian.com",
+  "owlcation.com",
+  "ranker.com",
+  "thoughtco.com",
+  "wikihow.com",
+  "wildlifeinformer.com",
+  "wisegeek.com",
+  "worldatlas.com",
+  "yourarticlelibrary.com",
+];
+
+const HOST_OUTLETS: Record<string, string> = {
+  "abc.net.au": "ABC",
+  "afr.com": "Australian Financial Review",
+  "apnews.com": "Associated Press",
+  "aspi.org.au": "ASPI",
+  "bbc.co.uk": "BBC",
+  "bbc.com": "BBC",
+  "canberratimes.com.au": "Canberra Times",
+  "crikey.com.au": "Crikey",
+  "dvm360.com": "dvm360",
+  "froglife.org": "Froglife",
+  "independentaustralia.net": "Independent Australia",
+  "inside.org.au": "Inside Story",
+  "lowyinstitute.org": "Lowy Institute",
+  "news.com.au": "News.com.au",
+  "nytimes.com": "New York Times",
+  "pearlsandirritations.com": "Pearls and Irritations",
+  "quarterlyessay.com": "Quarterly Essay",
+  "reuters.com": "Reuters",
+  "sbs.com.au": "SBS",
+  "smh.com.au": "Sydney Morning Herald",
+  "theage.com.au": "The Age",
+  "theaustralian.com.au": "The Australian",
+  "theconversation.com": "The Conversation",
+  "theguardian.com": "The Guardian",
+  "thesaturdaypaper.com.au": "The Saturday Paper",
+  "washingtonpost.com": "Washington Post",
+};
+
+const BLOCKED_DOMAINS = [...MILL_DOMAINS, ...SOCIAL_DOMAINS, ...FARM_DOMAINS];
 
 const GENERIC_QUERY_WORDS = new Set([
   "search",
@@ -47,13 +114,39 @@ export interface SearchHit {
   title: string;
   url: string;
   content: string;
+  publishedAt?: string;
+}
+
+export interface Article {
+  url: string;
+  title: string;
+  text: string;
+  publishedAt: string;
+}
+
+export interface NoteClaim {
+  claim: string;
+  quote: string;
+}
+
+export interface SourceNote {
+  id: string;
+  url: string;
+  title: string;
+  author: string;
+  outlet: string;
+  date: string;
+  stance: string;
+  claims: NoteClaim[];
 }
 
 export interface ResearchNotes {
   text: string;
   count: number;
   query: string;
+  counterQuery: string;
   hits: SearchHit[];
+  articles: Article[];
 }
 
 export interface ResearchBudget {
@@ -140,13 +233,114 @@ export function noteWordCount(text: string): number {
   );
 }
 
+export function canonicalUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    const path = parsed.pathname.replace(/\/+$/, "") || "/";
+    return `https://${host}${path}`;
+  } catch {
+    return url.trim();
+  }
+}
+
+export function titleKey(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+export function compactBrand(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+export function outletFromHost(url: string): string {
+  const host = hostOf(url);
+  if (!host) return "";
+  const known = HOST_OUTLETS[host];
+  if (known) return known;
+  const label = host.split(".")[0] ?? host;
+  return label.split("-").filter(Boolean).map((word) =>
+    word.charAt(0).toUpperCase() + word.slice(1)
+  ).join(" ");
+}
+
+export function outletMatchesDomain(outlet: string, url: string): boolean {
+  const claimed = outlet.trim();
+  if (!claimed) return true;
+  const host = hostOf(url);
+  if (!host) return false;
+  const known = HOST_OUTLETS[host];
+  const compactClaimed = compactBrand(claimed);
+  if (known && compactBrand(known) === compactClaimed) return true;
+  if (compactClaimed.length < 3) return false;
+  const compactHost = compactBrand(host);
+  if (compactHost.includes(compactClaimed)) return true;
+  const label = compactBrand(host.split(".")[0] ?? "");
+  if (label.length >= 3 && compactClaimed.includes(label)) return true;
+  if (label.length >= 4 && label.includes(compactClaimed)) return true;
+  return false;
+}
+
+export function resolvedOutlet(outlet: string, url: string): string {
+  if (outletMatchesDomain(outlet, url) && outlet.trim()) return outlet.trim();
+  return outletFromHost(url);
+}
+
+export function quoteInArticle(quote: string, text: string): boolean {
+  const needle = normalizeForMatch(quote);
+  if (!needle) return true;
+  return normalizeForMatch(text).includes(needle);
+}
+
+function normalizeForMatch(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+export function isBlockedSource(url: string): boolean {
+  let host = "";
+  try {
+    host = new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return true;
+  }
+  return BLOCKED_DOMAINS.some((domain) =>
+    host === domain.replace(/^www\./, "") ||
+    host.endsWith(`.${domain.replace(/^www\./, "")}`)
+  );
+}
+
 export function mergeHits(base: SearchHit[], extra: SearchHit[]): SearchHit[] {
-  const seen = new Set(base.map((hit) => hit.url));
-  return [...base, ...extra.filter((hit) => hit.url && !seen.has(hit.url))];
+  const urls = new Set(base.map((hit) => canonicalUrl(hit.url)));
+  const titles = new Set(
+    base.map((hit) => titleKey(hit.title)).filter(Boolean),
+  );
+  const next = [...base];
+  for (const hit of extra) {
+    if (!hit.url || isBlockedSource(hit.url)) continue;
+    const url = canonicalUrl(hit.url);
+    const title = titleKey(hit.title);
+    if (urls.has(url) || (title && titles.has(title))) continue;
+    urls.add(url);
+    if (title) titles.add(title);
+    next.push(hit);
+  }
+  return next;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function publishedField(item: Record<string, unknown>): string {
+  const value = item.published_date ?? item.publishedAt;
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export function hitsFromPayload(
@@ -164,7 +358,12 @@ export function hitsFromPayload(
     const summary = typeof item.content === "string" ? item.content : "";
     const content = excerpt(summary, excerptWords);
     if (!url || countWords(content) < 15) continue;
-    hits.push({ title, url, content });
+    hits.push({
+      title,
+      url,
+      content,
+      publishedAt: publishedField(item),
+    });
   }
   return hits;
 }
@@ -181,7 +380,13 @@ export function relevantToQuery(query: string, hit: SearchHit): boolean {
   const distinctive = subjectWords(query);
   if (distinctive.length === 0) return true;
   const raw = `${hit.title} ${hit.content}`.toLowerCase();
-  return distinctive.some((word) => new RegExp(`\\b${word}s?\\b`).test(raw));
+  const matched = distinctive.filter((word) =>
+    new RegExp(`\\b${word}s?\\b`).test(raw)
+  );
+  const need = distinctive.length >= 4
+    ? Math.ceil(distinctive.length / 2)
+    : 1;
+  return matched.length >= need;
 }
 
 export function selectHits(
@@ -189,16 +394,154 @@ export function selectHits(
   hits: SearchHit[],
   sources = MAX_SOURCES,
 ): SearchHit[] {
-  return hits.filter((hit) => relevantToQuery(query, hit)).slice(0, sources);
+  return hits
+    .filter((hit) => !isBlockedSource(hit.url) && relevantToQuery(query, hit))
+    .slice(0, sources);
 }
 
-async function searchHits(
-  query: string,
-  budget: ResearchBudget,
-): Promise<SearchHit[]> {
-  if (!query) return [];
+export function articlesFromHits(hits: SearchHit[]): Article[] {
+  return hits
+    .filter((hit) =>
+      !isBlockedSource(hit.url) && countWords(hit.content) >= 15
+    )
+    .map((hit) => ({
+      url: hit.url,
+      title: hit.title,
+      text: hit.content,
+      publishedAt: hit.publishedAt ?? "",
+    }));
+}
+
+export function failedExtractUrls(payload: unknown): string[] {
+  if (!isRecord(payload) || !Array.isArray(payload.failed_results)) return [];
+  const urls: string[] = [];
+  for (const item of payload.failed_results) {
+    if (typeof item === "string" && item.trim()) {
+      urls.push(item.trim());
+      continue;
+    }
+    if (isRecord(item) && typeof item.url === "string" && item.url.trim()) {
+      urls.push(item.url.trim());
+    }
+  }
+  return urls;
+}
+
+export function mergeArticles(
+  extracted: Article[],
+  fallback: Article[],
+): Article[] {
+  const seen = new Set(extracted.map((article) => canonicalUrl(article.url)));
+  const next = [...extracted];
+  for (const article of fallback) {
+    const key = canonicalUrl(article.url);
+    if (seen.has(key) || isBlockedSource(article.url)) continue;
+    seen.add(key);
+    next.push(article);
+  }
+  return next;
+}
+
+export function articlesFromExtract(
+  hits: SearchHit[],
+  payload: unknown,
+): Article[] {
+  if (!isRecord(payload) || !Array.isArray(payload.results)) return [];
+  const byUrl = new Map(hits.map((hit) => [canonicalUrl(hit.url), hit]));
+  const articles: Article[] = [];
+  const seen = new Set<string>();
+  for (const item of payload.results) {
+    if (!isRecord(item)) continue;
+    const url = typeof item.url === "string" ? item.url.trim() : "";
+    const text = typeof item.raw_content === "string" ? item.raw_content.trim() : "";
+    if (!url || text.length < MIN_ARTICLE_CHARS) continue;
+    const key = canonicalUrl(url);
+    if (seen.has(key) || isBlockedSource(url)) continue;
+    const hit = byUrl.get(key);
+    seen.add(key);
+    articles.push({
+      url: hit?.url ?? url,
+      title: hit?.title ||
+        (typeof item.title === "string" ? item.title : url),
+      text,
+      publishedAt: hit?.publishedAt ?? "",
+    });
+  }
+  return articles;
+}
+
+function stringField(row: Record<string, unknown>, key: string): string {
+  const value = row[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function sourceNotesFromUnknown(value: unknown): SourceNote[] {
+  const rows = Array.isArray(value)
+    ? value
+    : isRecord(value) && Array.isArray(value.notes)
+    ? value.notes
+    : [];
+  const notes: SourceNote[] = [];
+  for (const [index, item] of rows.entries()) {
+    if (!isRecord(item)) continue;
+    const url = stringField(item, "url");
+    if (!url) continue;
+    const claims: NoteClaim[] = [];
+    const rawClaims = item.claims;
+    if (Array.isArray(rawClaims)) {
+      for (const claim of rawClaims) {
+        if (!isRecord(claim)) continue;
+        const text = stringField(claim, "claim");
+        const quote = stringField(claim, "quote");
+        if (!text && !quote) continue;
+        claims.push({ claim: text || quote, quote });
+      }
+    }
+    notes.push({
+      id: stringField(item, "id") || `n${index + 1}`,
+      url,
+      title: stringField(item, "title") || url,
+      author: stringField(item, "author"),
+      outlet: resolvedOutlet(stringField(item, "outlet"), url),
+      date: stringField(item, "date") || stringField(item, "publishedAt"),
+      stance: stringField(item, "stance") || "unknown",
+      claims,
+    });
+  }
+  return notes.map((note, index) => ({ ...note, id: `n${index + 1}` }));
+}
+
+export function formatAttributedNotes(notes: readonly SourceNote[]): string {
+  return notes.map((note) => {
+    const who = [note.outlet, note.author, note.date].filter(Boolean).join(
+      ", ",
+    );
+    const claims = note.claims.map((claim) =>
+      `- ${claim.claim}${claim.quote ? `\n  Quote: "${claim.quote}"` : ""}`
+    ).join("\n");
+    return [
+      `[${note.id}] ${note.title}`,
+      who,
+      `URL: ${note.url}`,
+      `Stance: ${note.stance}`,
+      claims,
+    ].filter(Boolean).join("\n");
+  }).join("\n\n");
+}
+
+export function formatArticles(articles: readonly Article[]): string {
+  return articles.map((article, index) =>
+    `Article n${index + 1}\nTitle: ${article.title}\nURL: ${article.url}\nDate: ${article.publishedAt || "unknown"}\n\n${article.text}`
+  ).join("\n\n----\n\n");
+}
+
+async function tavilyPost(
+  url: string,
+  body: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<unknown> {
   const key = envGet("TAVILY_API_KEY");
-  const response = await fetch(TAVILY_SEARCH_URL, {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -206,80 +549,125 @@ async function searchHits(
         ? { Authorization: `Bearer ${key}` }
         : { "X-Tavily-Access-Mode": "keyless" }),
     },
-    body: JSON.stringify({
-      query,
-      max_results: budget.maxResults,
-      search_depth: "advanced",
-      chunks_per_source: 3,
-      include_answer: false,
-      include_raw_content: false,
-      exclude_domains: MILL_DOMAINS,
-    }),
-    signal: AbortSignal.timeout(20_000),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
-    console.log(`Research: none (HTTP ${response.status})`);
-    return [];
+    throw new Error(`HTTP ${response.status}`);
   }
+  return await response.json();
+}
+
+async function searchHits(
+  query: string,
+  budget: ResearchBudget,
+): Promise<SearchHit[]> {
+  if (!query) return [];
+  const payload = await tavilyPost(TAVILY_SEARCH_URL, {
+    query,
+    max_results: budget.maxResults,
+    search_depth: "advanced",
+    include_answer: false,
+    include_raw_content: false,
+    exclude_domains: BLOCKED_DOMAINS,
+  }, 20_000);
   return selectHits(
     query,
-    hitsFromPayload(await response.json(), budget.excerptWords),
+    hitsFromPayload(payload, budget.excerptWords),
     budget.sources,
   );
 }
 
-function researchFromHits(
-  query: string,
+export async function extractArticles(
   hits: SearchHit[],
-  budget: ResearchBudget,
+): Promise<Article[]> {
+  const selected = hits.filter((hit) => !isBlockedSource(hit.url)).slice(
+    0,
+    EXTRACT_LIMIT,
+  );
+  if (selected.length === 0) return [];
+  const payload = await tavilyPost(TAVILY_EXTRACT_URL, {
+    urls: selected.map((hit) => hit.url),
+    extract_depth: "advanced",
+    format: "markdown",
+    include_images: false,
+  }, 60_000);
+  const extracted = articlesFromExtract(selected, payload);
+  const failed = new Set(
+    failedExtractUrls(payload).map((url) => canonicalUrl(url)),
+  );
+  if (failed.size > 0) {
+    console.log(`Extract: ${failed.size} URL(s) failed; using search snippets`);
+  }
+  const missing = selected.filter((hit) => {
+    const key = canonicalUrl(hit.url);
+    return failed.has(key) ||
+      !extracted.some((article) => canonicalUrl(article.url) === key);
+  });
+  return mergeArticles(extracted, articlesFromHits(missing));
+}
+
+function emptyResearch(query: string, counterQuery = ""): ResearchNotes {
+  return {
+    text: "",
+    count: 0,
+    query,
+    counterQuery,
+    hits: [],
+    articles: [],
+  };
+}
+
+function researchFromArticles(
+  query: string,
+  counterQuery: string,
+  hits: SearchHit[],
+  articles: Article[],
 ): ResearchNotes {
   return {
-    text: sourceNotes(hits, budget.excerptWords, budget.sources),
-    count: hits.length,
+    text: articles.map((article) =>
+      `Source: ${article.title}\nURL: ${article.url}\nDate: ${article.publishedAt || "unknown"}`
+    ).join("\n\n"),
+    count: articles.length,
     query,
+    counterQuery,
     hits,
+    articles,
   };
 }
 
 export async function gatherResearch(
   topic: string,
   words = DEFAULT_ESSAY_LENGTH,
+  counter = "",
 ): Promise<ResearchNotes> {
   const query = searchQuery(topic);
   const budget = researchBudget(words);
-  if (!query) return { text: "", count: 0, query, hits: [] };
+  if (!query) return emptyResearch(query, counter);
   try {
-    const hits = await searchHits(query, budget);
-    return researchFromHits(query, hits, budget);
+    const primary = await searchHits(query, budget);
+    const opposing = counter
+      ? await searchHits(counter, budget).catch(() => [] as SearchHit[])
+      : [];
+    const hits = selectHits(
+      `${query} ${counter}`.trim(),
+      mergeHits(primary, opposing),
+      EXTRACT_LIMIT,
+    );
+    let articles = hits.length > 0
+      ? await extractArticles(hits).catch((error) => {
+        const message = error instanceof Error ? error.message : "request failed";
+        console.log(`Extract: failed (${message}); using search snippets`);
+        return articlesFromHits(hits);
+      })
+      : [];
+    if (articles.length === 0 && hits.length > 0) {
+      articles = articlesFromHits(hits);
+    }
+    return researchFromArticles(query, counter, hits, articles);
   } catch (error) {
     const message = error instanceof Error ? error.message : "request failed";
     console.log(`Research: none (${message})`);
-    return { text: "", count: 0, query, hits: [] };
-  }
-}
-
-export async function supplementResearch(
-  prior: ResearchNotes,
-  sections: string[],
-  words: number,
-): Promise<ResearchNotes> {
-  const budget = researchBudget(words);
-  const query = sections.map((section) => section.trim()).filter(Boolean)
-    .slice(0, 4).join(". ").slice(0, 400);
-  if (!query) return prior;
-  try {
-    const extra = await searchHits(query, budget);
-    const merged = mergeHits(prior.hits, extra);
-    const hits = selectHits(
-      `${prior.query} ${query}`,
-      merged,
-      Math.min(MAX_RESEARCH_SOURCES, Math.max(budget.sources, merged.length)),
-    );
-    if (hits.length === 0) return prior;
-    return researchFromHits(prior.query, hits, budget);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "request failed";
-    console.log(`Research: no extra notes (${message})`);
-    return prior;
+    return emptyResearch(query, counter);
   }
 }

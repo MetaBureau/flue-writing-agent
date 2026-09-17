@@ -14,7 +14,7 @@ export interface ProviderConfig {
 
 export const PROVIDERS: Record<string, ProviderConfig> = {
   haimaker: {
-    defaultModelId: "google/gemini-3.1-flash-lite",
+    defaultModelId: "anthropic/claude-sonnet-5",
     models: [
       { id: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
       { id: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash" },
@@ -60,11 +60,25 @@ function sharedEnv(providerName: string, type: "fast" | "reasoning"): boolean {
   return configured === providerName;
 }
 
-export const DRAFT_MODELS = [
-  "anthropic/claude-haiku-4-5",
-  "mistralai/mistral-large-2512",
-  "moonshotai/kimi-k2-0905",
+export const WRITER_OPTIONS = [
+  {
+    id: "anthropic/claude-sonnet-5",
+    label: "Claude Sonnet 5",
+    provider: "haimaker",
+  },
+  {
+    id: "google/gemini-3.1-flash-lite",
+    label: "Gemini 3.1 Flash Lite",
+    provider: "haimaker",
+  },
+  {
+    id: "mercury-2.5",
+    label: "Mercury 2.5",
+    provider: "mercury",
+  },
 ] as const;
+
+export const DEFAULT_WRITER_OPTION = WRITER_OPTIONS[0];
 
 export function modelLabel(modelId: string): string {
   for (const config of Object.values(PROVIDERS)) {
@@ -115,8 +129,11 @@ export async function reloadEnv(): Promise<void> {
   await load({ export: true, envPath: ".env" });
 }
 
-export function providerKeyProblem(providerName: string): string | undefined {
-  const resolved = resolveProvider(providerName, "fast");
+export function providerKeyProblem(
+  providerName: string,
+  type: "fast" | "reasoning" = "reasoning",
+): string | undefined {
+  const resolved = resolveProvider(providerName, type);
   const key = resolved.apiKey ?? "";
   if (!key) return `${resolved.name} key is not set.`;
   return undefined;

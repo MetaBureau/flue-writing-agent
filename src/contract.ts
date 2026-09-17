@@ -40,13 +40,9 @@ export function isEssayLength(
 export const WRITE_STAGES = [
   { id: "brief", label: "Brief" },
   { id: "research", label: "Research" },
-  { id: "outline", label: "Outline" },
-  { id: "drafts", label: "Drafts" },
-  { id: "synthesis", label: "Synthesis" },
-  { id: "extend", label: "Extend" },
-  { id: "style", label: "Style" },
-  { id: "briefcheck", label: "Brief check" },
-  { id: "factcheck", label: "Fact-check" },
+  { id: "plan", label: "Plan" },
+  { id: "draft", label: "Draft" },
+  { id: "critic", label: "Critic" },
 ] as const;
 
 export type StageId = (typeof WRITE_STAGES)[number]["id"];
@@ -81,52 +77,43 @@ export function essayPiece(
   };
 }
 
-export function modelSlug(modelId: string): string {
-  const slash = modelId.lastIndexOf("/");
-  return slash === -1 ? modelId : modelId.slice(slash + 1);
-}
-
-export function pieceRank(id: string): number {
-  if (id === "notes") return 0;
-  if (id.startsWith("draft:")) return 1;
-  if (id === "synthesis") return 2;
-  if (id === "briefcheck") return 3;
-  if (id === "essay") return 4;
-  return 5;
+export function planPiece(slug: string, markdown: string): Piece {
+  return {
+    id: "plan",
+    label: "Plan",
+    filename: `${slug}.plan.md`,
+    markdown,
+  };
 }
 
 export function draftPiece(
   slug: string,
-  modelId: string,
   markdown: string,
-  label?: string,
 ): Piece {
-  const slugId = modelSlug(modelId);
-  const title = label ?? modelId;
   return {
-    id: `draft:${slugId}`,
-    label: title,
-    filename: `${slug}.draft-${slugId}.md`,
-    markdown: `# ${title}\n\n${markdown.trim()}\n`,
+    id: "draft",
+    label: "Draft",
+    filename: `${slug}.draft.md`,
+    markdown: `# Draft\n\n${markdown.trim()}\n`,
   };
 }
 
-export function synthesisPiece(slug: string, markdown: string): Piece {
+export function criticPiece(slug: string, markdown: string): Piece {
   return {
-    id: "synthesis",
-    label: "Synthesis",
-    filename: `${slug}.synthesis.md`,
-    markdown: `# Synthesis\n\n${markdown.trim()}\n`,
+    id: "critic",
+    label: "Critic",
+    filename: `${slug}.critic.md`,
+    markdown,
   };
 }
 
-export function briefcheckPiece(slug: string, markdown: string): Piece {
-  return {
-    id: "briefcheck",
-    label: "Brief revision",
-    filename: `${slug}.brief.md`,
-    markdown: `# Brief revision\n\n${markdown.trim()}\n`,
-  };
+export function pieceRank(id: string): number {
+  if (id === "notes") return 0;
+  if (id === "plan") return 1;
+  if (id === "draft") return 2;
+  if (id === "critic") return 3;
+  if (id === "essay") return 4;
+  return 5;
 }
 
 export type WriteEvent =

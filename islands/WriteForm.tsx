@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ModelChoice } from "../src/providers.ts";
+import {
+  DEFAULT_WRITER_OPTION,
+  WRITER_OPTIONS,
+} from "../src/providers.ts";
 import {
   DEFAULT_ESSAY_LENGTH,
   ESSAY_LENGTHS,
@@ -14,10 +17,6 @@ import {
 
 interface Props {
   styles: string[];
-  providers: string[];
-  models: Record<string, ModelChoice[]>;
-  checkModels: ModelChoice[];
-  defaultCheckModel: string;
   providerProblems?: Record<string, string>;
 }
 
@@ -279,25 +278,13 @@ function PieceModal(
 }
 
 export default function WriteForm(
-  {
-    styles,
-    providers,
-    models,
-    checkModels,
-    defaultCheckModel,
-    providerProblems = {},
-  }: Props,
+  { styles, providerProblems = {} }: Props,
 ) {
   const [topic, setTopic] = useState("Write an essay about pet cats.");
   const [words, setWords] = useState(DEFAULT_ESSAY_LENGTH);
   const [style, setStyle] = useState("economist");
-  const [provider, setProvider] = useState(providers[0] ?? "mercury");
-  const [model, setModel] = useState(
-    models[providers[0] ?? "mercury"]?.[0]?.id ?? "",
-  );
-  const [checkModel, setCheckModel] = useState(
-    checkModels.find((choice) => choice.id === defaultCheckModel)?.id ??
-      checkModels[0]?.id ?? "",
+  const [writer, setWriter] = useState<(typeof WRITER_OPTIONS)[number]["id"]>(
+    DEFAULT_WRITER_OPTION.id,
   );
   const [stages, setStages] = useState<StageMap>(idleStages);
   const [detail, setDetail] = useState("");
@@ -306,7 +293,9 @@ export default function WriteForm(
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [busy, setBusy] = useState(false);
-  const providerProblem = providerProblems[provider] ?? "";
+  const selected = WRITER_OPTIONS.find((option) => option.id === writer) ??
+    DEFAULT_WRITER_OPTION;
+  const providerProblem = providerProblems[selected.provider] ?? "";
 
   function applyEvent(event: WriteEvent) {
     if (event.type === "stage") {
@@ -352,9 +341,8 @@ export default function WriteForm(
           topic,
           words,
           style,
-          provider,
-          model,
-          checkModel,
+          provider: selected.provider,
+          model: selected.id,
         }),
       });
       const type = response.headers.get("content-type") ?? "";
@@ -397,8 +385,8 @@ export default function WriteForm(
         <div class="card-body gap-4">
           <h1 class="card-title">Flue writer</h1>
           <PromptInterview
-            provider={provider}
-            model={model}
+            provider={selected.provider}
+            model={selected.id}
             topic={topic}
             disabled={busy || Boolean(providerProblem)}
             onPrompt={setTopic}
@@ -435,43 +423,22 @@ export default function WriteForm(
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
-          <label class="label" for="provider">Provider</label>
-          <select
-            id="provider"
-            class="select w-full"
-            value={provider}
-            onChange={(event) => {
-              const next = event.currentTarget.value;
-              setProvider(next);
-              setModel(models[next]?.[0]?.id ?? "");
-            }}
-          >
-            {providers.map((name) => (
-              <option key={name} value={name}>{name}</option>
+          <span class="label">Writer</span>
+          <div class="flex flex-col gap-2">
+            {WRITER_OPTIONS.map((option) => (
+              <label class="label justify-start gap-3" key={option.id}>
+                <input
+                  type="radio"
+                  name="writer"
+                  class="radio radio-primary"
+                  value={option.id}
+                  checked={writer === option.id}
+                  onChange={() => setWriter(option.id)}
+                />
+                <span>{option.label}</span>
+              </label>
             ))}
-          </select>
-          <label class="label" for="model">Model</label>
-          <select
-            id="model"
-            class="select w-full"
-            value={model}
-            onChange={(event) => setModel(event.currentTarget.value)}
-          >
-            {(models[provider] ?? []).map((choice) => (
-              <option key={choice.id} value={choice.id}>{choice.label}</option>
-            ))}
-          </select>
-          <label class="label" for="check-model">Checker</label>
-          <select
-            id="check-model"
-            class="select w-full"
-            value={checkModel}
-            onChange={(event) => setCheckModel(event.currentTarget.value)}
-          >
-            {checkModels.map((choice) => (
-              <option key={choice.id} value={choice.id}>{choice.label}</option>
-            ))}
-          </select>
+          </div>
           <button
             class="btn btn-primary"
             type="submit"

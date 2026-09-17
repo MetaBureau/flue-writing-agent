@@ -1,6 +1,6 @@
 # RFC 0001: Align writing stages with an AI-era publishing workflow
 
-- Status: Draft. Phase 0 is implemented except the actual-cost half of item 5. Phase 1 items 1–6 are implemented. Item 4 now treats length as a commission with an 85% floor; a short essay is an error. Items 7–9 are not approved. Phase 2 items 1–3, 6, and 7 are implemented. Items 4, 5, and 8 are not.
+- Status: Superseded by RFC 0002. Kept as the publishing-stage map that led to the rewrite.
 - Date: 2026-09-17 (updated 2026-09-17: length is a commission, not a hint)
 - Author: Stew Milne
 - Scope: `src/workflow.ts`, `src/main.ts`, `src/complete.ts`, `src/providers.ts`, `src/notes.ts`, `src/agents/write.ts`, `src/agents/writer.ts`, `src/skills/`, `src/contract.ts`, `islands/WriteForm.tsx`
@@ -17,7 +17,7 @@ This RFC maps each stage to a traditional publishing workflow and records that e
 
 Before Phase 1 the order was `research → outline → drafts (3 tones) → pickDraft → style → extend → save`. Phase 1 runs extend before style. Phase 2 adds fact-check after style: `research → outline → drafts (3 tones) → pickDraft → extend → style → factcheck → save`.
 
-The form and the CLI run the same stages. One provider and model (chosen in the form or with `--model`) runs the writing stages. Fact-check uses a separate HaiMaker model. Before Phase 0, `streamChat` sent no reasoning setting, accepted any `finish_reason`, and recorded no token usage or cost.
+The form and the CLI run the same stages. The form picks one of three writer radios; the CLI uses `--model`. That model runs outline, extend, and style. Fact-check uses a HaiMaker model the form does not pick. Before Phase 0, `streamChat` sent no reasoning setting, accepted any `finish_reason`, and recorded no token usage or cost.
 
 ## Gap analysis
 
@@ -245,7 +245,7 @@ Items 1–6 are in the form and CLI. The Flue `Writer` agent now omits `## Style
 7. Order prompts so the notes are a shared prefix, for prompt caching. Add `cache_control` for Anthropic models, and report `cached_tokens`.
 8. Test native reasoning controls: Gemini `thinkingConfig` through `/v1beta/models/{model}:generateContent` (the HaiMaker page does not mention `thinkingConfig`), and Anthropic `thinking` through `/v1/messages`.
 
-Items 1–3, 6, and 7 are in the form and CLI. Unsupported claims are listed in the notes file, not cut and not written into the essay, because a first-hand topic fact has no URL. Claims the checker does not return are listed as unchecked there too. Supported claims get an inline markdown link, and cited sources are listed under `## Sources`. An invented URL is not linked. The checker is a HaiMaker model (`CHECK_MODEL`, default `google/gemini-3.1-flash-lite`, or the form's second picker), not the writer's reasoning slot. It may match the writer. If that id is one of the three drafters, the default is used and the replacement is logged. A `CHECK_MODEL` that is not a picker id uses the default. Without `HAIMAKER_API_KEY`, fact-check is skipped before research and the essay is still saved. A checker auth or rate-limit error saves the essay marked unchecked, then reports the error. Item 4 as written (`haimaker/auto`) is still not done.
+Items 1–3, 6, and 7 are in the form and CLI. Unsupported claims are listed in the notes file, not cut and not written into the essay, because a first-hand topic fact has no URL. Claims the checker does not return are listed as unchecked there too. Supported claims get an inline markdown link, and cited sources are listed under `## Sources`. An invented URL is not linked. The checker is a HaiMaker model (`CHECK_MODEL` or `--check-model`, default `google/gemini-3.1-flash-lite`). The form does not pick it. It is not the writer's reasoning slot. It may match the writer. If that id is one of the three drafters, the default is used and the replacement is logged. A `CHECK_MODEL` that is not a picker id uses the default. Without `HAIMAKER_API_KEY`, fact-check is skipped before research and the essay is still saved. A checker auth or rate-limit error saves the essay marked unchecked, then reports the error. Item 4 as written (`haimaker/auto`) is still not done.
 
 Fact-check runs after style so the style pass cannot rewrite the links away. `response_format` `json_schema` is sent for the outline only when the catalog lists `response_format`. Notes sit at the start of the system message. Anthropic calls set `cache_control` on that notes block only, not on the instruction or draft. `haimaker/auto` and a repo-managed router are not applied: that writes to the live key, and the target models and capture flags are still open. Item 8 is a paid test and was not run.
 

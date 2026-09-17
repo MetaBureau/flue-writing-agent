@@ -28,13 +28,13 @@ deno task start "<topic>" [options]
 Options:
   --provider <name>   Provider: haimaker, mercury
   --model <id>        Model id, e.g. anthropic/claude-haiku-4-5 (HaiMaker)
-  --check-model <id>  HaiMaker model for fact-check (default google/gemini-3.1-flash-lite)
+  --check-model <id>  Optional critic model (default is the writer)
   --style <name>      Style: economist, strunk-white, monocle, professional
   --format <fmt>      Output: markdown, json, plain
   --verbose           Show detailed progress
   --dry-run           Show config without running
 
-Length defaults to 900 words. Put a count in the topic (`200 words`) to override. The saved essay must be at least 85% of that count and at most 115%, excluding the Sources list. Merge, extend, and style are told that range. A longer piece is trimmed from the body, keeping the opening and the close. The body word count is written under the title.
+Length defaults to 900 words. Put a count in the topic (`200 words`) to override. The saved essay must be at least 85% of that count and at most 115%, excluding the Sources list. Plan and draft are told that range. A miss is an error. The body word count is written under the title.
 ```
 
 **Examples:**
@@ -58,9 +58,9 @@ export FAST_MODEL_KEY=...
 # HaiMaker. The code reads HAIMAKER_API_KEY, not FAST_MODEL_KEY.
 # Do not set FAST_MODEL_ID=haimaker/auto. That model errors until a router is assigned.
 export HAIMAKER_API_KEY=...
-export HAIMAKER_MODEL_ID=google/gemini-3.1-flash-lite
-# Fact-check. Separate from the writer. Default is Gemini 3.1 Flash Lite.
-export CHECK_MODEL=google/gemini-3.1-flash-lite
+export HAIMAKER_MODEL_ID=anthropic/claude-sonnet-5
+# Optional critic model. Default is the writer.
+# export CHECK_MODEL=
 ```
 
 HaiMaker spend is bounded by the key, not by this app. Use a service account key and set `max_budget`, `budget_duration`, and `soft_budget` there. `soft_budget` alerts and does not block. Set `models` to the picker list. `model_max_budget` is optional.
@@ -82,19 +82,21 @@ See `.env.example` for complete provider options.
 src/
 ├── main.ts          # CLI, then write the essay to output/
 ├── complete.ts      # Streaming chat completion
-├── research.ts      # Tavily search, excerpts only, no synthesized answer
-├── providers.ts     # Provider registry and DRAFT_MODELS
+├── notes.ts         # Tavily search, extract, structured notes
+├── cite.ts          # Citation and copy harness
+├── critic.ts        # One critic, passage-level fixes
+├── providers.ts     # Provider registry and WRITER_OPTIONS
 ├── agents/
-│   └── write.ts     # Outline, parallel drafts, synthesis, extend
+│   └── write.ts     # Plan, one draft, length fit
 └── skills/
-    └── editorial.ts # Style pass
+    └── styles.ts    # Draft wording catalog
 ```
 
 ## Features
 
-- **Topic notes**: The topic is the brief. Research searches the subject plus the claim and returns page excerpts. Prompts treat notes as the source for specifics; argument and general knowledge are allowed. The brief's audience, purpose, tone, and constraints outrank stage defaults. Do not invent statistics, studies, quotes, or sources. Do not paste a call to action or a URL into the essay body
-- **Writer and checker**: The form and `--model` run outline, extend, and style. Three HaiMaker models draft in parallel. Mercury 2.5 synthesizes. Fact-check uses `CHECK_MODEL` or the form's checker, default `google/gemini-3.1-flash-lite`, through `HAIMAKER_API_KEY`. It may match the writer. If that id is one of the three drafters, the checker falls back to the default. Without a HaiMaker key, fact-check is skipped and the essay is still saved. Unsupported claims stay in the notes file; argument and general knowledge are `not-a-claim` and are not listed
-- **Style Enforcement**: Apply editorial rules (Economist, Strunk & White, Monocle, Professional)
+- **Attributed notes**: The topic is the brief. Research searches the subject plus the claim, then a counter-search, then extracts full articles. Notes keep id, URL, author, outlet, date, stance, and quotes. The outlet must match the URL's domain. Content farms are blocked. Writers see that attribution. The brief's audience, purpose, tone, and constraints outrank stage defaults. Do not invent statistics, studies, quotes, or sources. Do not paste a call to action or a URL into the essay body
+- **Writer**: The form offers three writer radios (Claude Sonnet 5 by default, Gemini 3.1 Flash Lite, Mercury 2.5). That model, or `--model`, runs notes, plan, draft, and critic. `--check-model` may override the critic only
+- **Style**: The catalog shapes draft wording. It is not a rewrite pass
 - **Provider Abstraction**: Unified interface for any OpenAI-compatible API (HaiMaker, Mercury)
 - **Output Formatting**: Markdown, JSON, or plain text
 - **Verbose Mode**: Detailed progress logging for debugging
@@ -102,16 +104,12 @@ src/
 ## Workflow
 
 1. **Brief**: Parse audience, purpose, tone, claim, and constraints from the topic. Fall back to the topic text if the parse fails
-2. **Research**: Tavily search for page excerpts on the subject plus the claim, not the writing instruction. No synthesized answer. If the call fails, continue with the topic only
-3. **Notes**: The topic string plus those excerpts
-4. **Outline**: Generate a structured outline with the chosen model. The brief governs audience, purpose, and tone
-5. **Draft**: Write three HaiMaker drafts in parallel (Claude Haiku 4.5, Mistral Large 2512, Kimi K2 0905), or one writer draft if there is no HaiMaker key
-6. **Synthesis**: Mercury 2.5 merges the drafts, or the writer if there is no Mercury key, or the longest draft if synthesis is empty. Repetition is a fault. A longest-draft fallback is a warning
-7. **Extend**: Add unused on-topic facts from notes that are not about the source page. Stop when those notes are gone, not by looping until the word floor
-8. **Style pass**: Rewrite the extended draft into one essay. The preset controls wording. It must not change the brief's tone, purpose, or humour. Cut empty praise and filler. Keep humour the brief asks for
-9. **Brief check**: The checker is told the measured word count and does not judge length. It judges audience, purpose, tone, claim, and constraints. Amusement needs actual wit, not just an elevated tone. It also fails pasted source text, a body link or URL, a call to action, and a stretch that does not serve the claim. One Mercury revision if it fails. The revision cuts repetition. Skip is a warning
-10. **Fact-check**: Match checkable specifics to note URLs. The checker returns a claim number, not the claim text, in batches of about 25. Cite supported claims. Flag unsupported claims. Skip argument and general knowledge (`not-a-claim`). Do not cut them
-11. **Save**: Print the essay and write `output/<slug>.md` plus `output/<slug>.notes.md` (notes, brief, models, estimate). Strip links, URLs, and calls to action from the body. Keep `## Sources` links. No `## Style:` line in the essay
+2. **Research**: Tavily search on the subject plus the claim, plus a counter-search. Extract the top articles in full. No synthesized answer. If extract fails, use search snippets. If search fails, continue with the topic only
+3. **Notes**: One model turn turns each article into structured notes with attribution
+4. **Plan**: Map each section to note ids, at most three sections for a 500-word essay. Name counter-arguments and gaps. Do not label Introduction or Conclusion
+5. **Draft**: Write one essay from the plan, paraphrasing, citing `[n3]`. Quoted words stay under 15% of the body. If it is short, one expand pass fills thin sections from notes already in the plan. If it is long, one shorten pass cuts filler
+6. **Critic**: One model sees the brief, the notes, and the draft. The harness rejects uncited figures and quotes, missing note ids, unquoted copying, and a quote share over 15%. Critic issues and harness findings merge. Two revise passes. Leftover copied phrases are quoted in place only under the quote budget. Leftover harness problems save as a warning
+7. **Save**: Print the essay and write `output/<slug>.md` plus `output/<slug>.notes.md`. Strip links, URLs, and calls to action from the body. `## Sources` lists cited notes. No `## Style:` line in the essay
 
 ## Security
 
