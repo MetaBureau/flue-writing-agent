@@ -1,6 +1,10 @@
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { ModelChoice } from "../src/providers.ts";
 import {
+  DEFAULT_ESSAY_LENGTH,
+  ESSAY_LENGTHS,
+  type Piece,
+  PROMPT_OPENING,
   type StageId,
   type StageStatus,
   WRITE_STAGES,
@@ -30,10 +34,257 @@ function stepClass(status: StageStatus): string {
   return "";
 }
 
+const PIECE_ORDER = [
+  "notes",
+  "draft:conversational",
+  "draft:professional",
+  "draft:analytical",
+  "essay",
+];
+
+function pieceOrder(id: string): number {
+  const index = PIECE_ORDER.indexOf(id);
+  return index === -1 ? PIECE_ORDER.length : index;
+}
+
+function upsertPiece(current: Piece[], piece: Piece): Piece[] {
+  return [...current.filter((item) => item.id !== piece.id), piece].sort((
+    left,
+    right,
+  ) => pieceOrder(left.id) - pieceOrder(right.id));
+}
+
+function downloadMarkdown(filename: string, markdown: string) {
+  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.rel = "noopener";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+type PromptAnswer = { question: string; answer: string };
+
+function PromptInterview(
+  { provider, model, topic, disabled, onPrompt }: {
+    provider: string;
+    model: string;
+    topic: string;
+    disabled: boolean;
+    onPrompt: (prompt: string) => void;
+  },
+) {
+  const seed = topic.trim();
+  const [turns, setTurns] = useState<PromptAnswer[]>([]);
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [ready, setReady] = useState("");
+  const [error, setError] = useState("");
+  const [asking, setAsking] = useState(false);
+
+  async function ask(force: boolean) {
+    const reply = answer.trim();
+    const nextTurns = question.trim() && reply
+      ? [...turns, { question, answer: reply }]
+      : turns;
+    if (!force && !question && !seed && turns.length === 0) {
+      setError("");
+      setQuestion(PROMPT_OPENING);
+      return;
+    }
+    if (!force && question && !reply) {
+      setError("Answer the question, or click Write the prompt.");
+      return;
+    }
+    const subject = seed || reply;
+    setAsking(true);
+    setError("");
+    try {
+      const response = await fetch("/api/prompt", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          model,
+          seed: subject,
+          turns: force && !reply ? turns : nextTurns,
+          force,
+        }),
+      });
+      const payload = await response.json() as {
+        status?: string;
+        question?: string;
+        prompt?: string;
+        error?: string;
+      };
+      if (!response.ok || payload.error) {
+        setError(payload.error ?? "The prompt interview failed.");
+        return;
+      }
+      setTurns(force && !answer.trim() ? turns : nextTurns);
+      setAnswer("");
+      if (payload.status === "ask" && payload.question) {
+        setQuestion(payload.question);
+        setReady("");
+        return;
+      }
+      if (payload.status === "ready" && payload.prompt) {
+        setQuestion("");
+        setReady(payload.prompt);
+        return;
+      }
+      setError("The prompt interview returned nothing.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The prompt interview failed.");
+    } finally {
+      setAsking(false);
+    }
+  }
+
+  function reset() {
+    setTurns([]);
+    setQuestion("");
+    setAnswer("");
+    setReady("");
+    setError("");
+  }
+
+  return (
+    <div class="flex flex-col gap-3">
+      <h2 class="font-semibold">Prompt</h2>
+      <div class="flex flex-wrap gap-2">
+        <button
+          type="button"
+          class="btn btn-sm"
+          disabled={disabled || asking || (Boolean(question) && !answer.trim())}
+          onClick={() => ask(false)}
+        >
+          {asking
+            ? <span class="loading loading-spinner loading-xs" />
+            : question
+            ? "Answer"
+            : "Ask questions"}
+        </button>
+        {question || turns.length > 0
+          ? (
+            <button
+              type="button"
+              class="btn btn-sm btn-outline"
+              disabled={disabled || asking}
+              onClick={() => ask(true)}
+            >
+              Write the prompt
+            </button>
+          )
+          : null}
+        {turns.length > 0
+          ? (
+            <button type="button" class="btn btn-sm btn-ghost" onClick={reset}>
+              Start over
+            </button>
+          )
+          : null}
+      </div>
+      {turns.length > 0 || question
+        ? (
+          <div class="flex max-h-80 flex-col gap-2 overflow-y-auto">
+            {turns.map((turn, index) => (
+              <div key={index}>
+                <div class="chat chat-start">
+                  <div class="chat-bubble">{turn.question}</div>
+                </div>
+                <div class="chat chat-end">
+                  <div class="chat-bubble chat-bubble-primary">{turn.answer}</div>
+                </div>
+              </div>
+            ))}
+            {question
+              ? (
+                <div class="chat chat-start">
+                  <div class="chat-bubble">{question}</div>
+                </div>
+              )
+              : null}
+          </div>
+        )
+        : null}
+      {question
+        ? (
+          <textarea
+            class="textarea w-full"
+            rows={3}
+            value={answer}
+            placeholder="Your answer"
+            onInput={(event) => setAnswer(event.currentTarget.value)}
+          />
+        )
+        : null}
+      {error ? <div class="alert alert-error">{error}</div> : null}
+      {ready
+        ? (
+          <div class="flex flex-col gap-2">
+            <pre class="whitespace-pre-wrap font-sans">{ready}</pre>
+            <button
+              type="button"
+              class="btn btn-sm btn-primary"
+              onClick={() => onPrompt(ready)}
+            >
+              Use this prompt
+            </button>
+          </div>
+        )
+        : null}
+    </div>
+  );
+}
+
+function PieceModal(
+  { piece, onClose }: { piece: Piece | null; onClose: () => void },
+) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const node = dialog.current;
+    if (!node) return;
+    if (piece && !node.open) node.showModal();
+    if (!piece && node.open) node.close();
+  }, [piece]);
+  return (
+    <dialog class="modal" ref={dialog} onClose={onClose}>
+      <div class="modal-box flex w-11/12 max-w-3xl flex-col max-h-[calc(100vh-5em)]">
+        <h3 class="text-lg font-bold">{piece?.label ?? "Document"}</h3>
+        <div class="mt-4 min-h-0 overflow-y-auto">
+          <pre class="whitespace-pre-wrap font-sans">{piece?.markdown ?? ""}</pre>
+        </div>
+        <div class="modal-action">
+          <button
+            type="button"
+            class="btn"
+            disabled={!piece}
+            onClick={() => piece && downloadMarkdown(piece.filename, piece.markdown)}
+          >
+            Download .md
+          </button>
+          <form method="dialog">
+            <button class="btn" type="submit">Close</button>
+          </form>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button type="submit">close</button>
+      </form>
+    </dialog>
+  );
+}
+
 export default function WriteForm(
   { styles, providers, models, checkModels, defaultCheckModel, providerProblems = {} }: Props,
 ) {
-  const [topic, setTopic] = useState("Write a 900 word essay about pet cats.");
+  const [topic, setTopic] = useState("Write an essay about pet cats.");
+  const [words, setWords] = useState(DEFAULT_ESSAY_LENGTH);
   const [style, setStyle] = useState("economist");
   const [provider, setProvider] = useState(providers[0] ?? "mercury");
   const [model, setModel] = useState(
@@ -45,7 +296,8 @@ export default function WriteForm(
   );
   const [stages, setStages] = useState<StageMap>(idleStages);
   const [detail, setDetail] = useState("");
-  const [markdown, setMarkdown] = useState("");
+  const [pieces, setPieces] = useState<Piece[]>([]);
+  const [openId, setOpenId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const providerProblem = providerProblems[provider] ?? "";
@@ -57,8 +309,19 @@ export default function WriteForm(
       if (event.status === "error" && event.detail) setError(event.detail);
       return;
     }
+    if (event.type === "piece") {
+      setPieces((current) => upsertPiece(current, event.piece));
+      return;
+    }
     if (event.type === "essay") {
-      setMarkdown(event.markdown);
+      setPieces((current) =>
+        upsertPiece(current, {
+          id: "essay",
+          label: "Essay",
+          filename: event.filename,
+          markdown: event.markdown,
+        })
+      );
       setError("");
       return;
     }
@@ -70,13 +333,21 @@ export default function WriteForm(
     setBusy(true);
     setError("");
     setDetail("");
-    setMarkdown("");
+    setPieces([]);
+    setOpenId("");
     setStages(idleStages());
     try {
       const response = await fetch("/api/write", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ topic, style, provider, model, checkModel }),
+        body: JSON.stringify({
+          topic,
+          words,
+          style,
+          provider,
+          model,
+          checkModel,
+        }),
       });
       const type = response.headers.get("content-type") ?? "";
       if (type.includes("application/json")) {
@@ -117,6 +388,13 @@ export default function WriteForm(
       <form class="card bg-base-100 shadow-sm" onSubmit={onSubmit}>
         <div class="card-body gap-4">
           <h1 class="card-title">Flue writer</h1>
+          <PromptInterview
+            provider={provider}
+            model={model}
+            topic={topic}
+            disabled={busy || Boolean(providerProblem)}
+            onPrompt={setTopic}
+          />
           <label class="label" for="topic">Topic</label>
           <textarea
             id="topic"
@@ -127,6 +405,17 @@ export default function WriteForm(
           >
             {topic}
           </textarea>
+          <label class="label" for="words">Length</label>
+          <select
+            id="words"
+            class="select w-full"
+            value={words}
+            onChange={(event) => setWords(Number(event.currentTarget.value))}
+          >
+            {ESSAY_LENGTHS.map((count) => (
+              <option key={count} value={count}>{count} words</option>
+            ))}
+          </select>
           <label class="label" for="style">Style</label>
           <select
             id="style"
@@ -204,15 +493,46 @@ export default function WriteForm(
         ? <div class="alert alert-error">{providerProblem}</div>
         : null}
       {error ? <div class="alert alert-error">{error}</div> : null}
-      {markdown
+      {pieces.length > 0
         ? (
-          <article class="card bg-base-100 shadow-sm">
-            <div class="card-body prose max-w-none">
-              <pre class="whitespace-pre-wrap font-sans">{markdown}</pre>
+          <section class="card bg-base-100 shadow-sm">
+            <div class="card-body gap-3">
+              <h2 class="card-title">Documents</h2>
+              <ul class="flex flex-col gap-2">
+                {pieces.map((piece) => (
+                  <li
+                    key={piece.id}
+                    class="flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <span>{piece.label}</span>
+                    <div class="flex gap-2">
+                      <button
+                        type="button"
+                        class="btn btn-sm"
+                        onClick={() => setOpenId(piece.id)}
+                      >
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline"
+                        onClick={() =>
+                          downloadMarkdown(piece.filename, piece.markdown)}
+                      >
+                        Download .md
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             </div>
-          </article>
+          </section>
         )
         : null}
+      <PieceModal
+        piece={pieces.find((piece) => piece.id === openId) ?? null}
+        onClose={() => setOpenId("")}
+      />
     </div>
   );
 }

@@ -1,14 +1,18 @@
 /// <reference lib="deno.ns" />
 import {
+  assertEssayLength,
   countWords,
   draftingNotes,
   essayMarkdown,
   extendDraft,
+  finishEssay,
   generateDrafts,
   generateOutline,
   notesRecord,
   pickDraft,
+  publishedTitle,
   stripLeadingTitle,
+  wordCountFromTopic,
 } from "./agents/write.ts";
 import { loadModelHub, pricesFromCatalog } from "./catalog.ts";
 import {
@@ -20,8 +24,9 @@ import {
 } from "./factcheck.ts";
 import { formatRun, RunMeter } from "./complete.ts";
 import { applyEditorialStyle } from "./skills/editorial.ts";
-import { gatherResearch } from "./research.ts";
+import { gatherResearch, supplementResearch } from "./research.ts";
 import { isProviderModel, PROVIDERS, resolveProvider } from "./providers.ts";
+import { essayLengthFloor } from "./contract.ts";
 
 interface Args {
   topic: string;
@@ -125,7 +130,7 @@ function log(args: Args, phase: string, detail: string) {
   }
 }
 
-function formatOutput(args: Args, content: string) {
+function formatOutput(args: Args, content: string, title = args.topic) {
   const body = stripLeadingTitle(content);
   if (args.outputFormat === "json") {
     return JSON.stringify(
@@ -139,7 +144,7 @@ function formatOutput(args: Args, content: string) {
       2,
     );
   } else if (args.outputFormat === "markdown") {
-    return essayMarkdown(args.topic, body);
+    return essayMarkdown(title, body);
   } else {
     return body;
   }
@@ -194,7 +199,9 @@ async function runWritingWorkflow(args: Args) {
       `Reasoning Model: ${reasoningProvider.modelId} (${reasoningProvider.baseUrl})`,
     );
     console.log(
-      `Checker: ${checker.modelId}${checker.apiKey ? "" : " (no HaiMaker key; not checked)"}`,
+      `Checker: ${checker.modelId}${
+        checker.apiKey ? "" : " (no HaiMaker key; not checked)"
+      }`,
     );
     console.log(`Output Format: ${args.outputFormat}`);
     console.log(`Verbose: ${args.verbose}`);
@@ -205,9 +212,10 @@ async function runWritingWorkflow(args: Args) {
   }
 
   log(args, "research", "Searching the web with Tavily");
-  const research = await gatherResearch(args.topic);
+  const target = wordCountFromTopic(args.topic);
+  let research = await gatherResearch(args.topic, target);
   if (research.count > 0) console.log(`Research: ${research.count} sources`);
-  const notes = {
+  let notes = {
     text: draftingNotes(
       [args.topic, research.text].filter(Boolean).join("\n\n"),
     ),
@@ -226,7 +234,19 @@ async function runWritingWorkflow(args: Args) {
       reasoningProvider,
       meter,
       catalog.get(reasoningProvider.modelId)?.supportedParams,
+      target,
     );
+    research = await supplementResearch(
+      research,
+      outline.sections,
+      outline.wordCountTarget,
+    );
+    notes = {
+      text: draftingNotes(
+        [args.topic, research.text].filter(Boolean).join("\n\n"),
+      ),
+      topic: args.topic,
+    };
     console.log(cost());
 
     log(args, "drafts", `Creating variations with ${fastProvider.name}`);
@@ -246,36 +266,68 @@ async function runWritingWorkflow(args: Args) {
       `[draft:${selected.style}] ${countWords(draft)} words before extend`,
     );
 
-    log(args, "extend", "Adding unused facts from the notes");
-    const extended = await extendDraft(
+    log(args, "extend", "Weaving unused facts into the essay");
+    let extended = await extendDraft(
       draft,
       notes.text,
       outline.wordCountTarget,
       fastProvider,
       "extend",
       meter,
+      args.topic,
     );
+    if (countWords(extended) < essayLengthFloor(outline.wordCountTarget)) {
+      research = await supplementResearch(
+        research,
+        outline.sections,
+        outline.wordCountTarget,
+      );
+      notes = {
+        text: draftingNotes(
+          [args.topic, research.text].filter(Boolean).join("\n\n"),
+        ),
+        topic: args.topic,
+      };
+      extended = await extendDraft(
+        extended,
+        notes.text,
+        outline.wordCountTarget,
+        fastProvider,
+        "extend",
+        meter,
+        args.topic,
+      );
+    }
+    assertEssayLength(extended, outline.wordCountTarget);
     console.log(cost());
 
     log(args, "style", `Applying ${args.style} editorial rules`);
-    const finalContent = await applyEditorialStyle(
+    const styled = await applyEditorialStyle(
       extended,
       args.style,
       fastProvider,
       outline.wordCountTarget,
       meter,
-      countWords(extended) > countWords(draft) ? countWords(draft) : 0,
+      essayLengthFloor(outline.wordCountTarget),
       notes.text,
+      args.topic,
     );
+    const finalContent = finishEssay(
+      outline.title,
+      styled,
+      essayLengthFloor(outline.wordCountTarget),
+    );
+    assertEssayLength(finalContent, outline.wordCountTarget);
     console.log(cost());
 
     log(args, "factcheck", "Matching claims to source URLs");
     const hits = citableHits(research.hits);
     const slug = topicSlug(args.topic);
     const path = `output/${slug}.md`;
+    const title = publishedTitle(args.topic, outline.title, finalContent);
     const save = (body: string, findings: string) =>
       Promise.all([
-        writeOutputFile(path, formatOutput(args, body)),
+        writeOutputFile(path, formatOutput(args, body, title)),
         writeOutputFile(
           `output/${slug}.notes.md`,
           notesRecord({
@@ -307,10 +359,11 @@ async function runWritingWorkflow(args: Args) {
     }
     console.log(cost());
     console.log(`[factcheck] ${checked.detail}`);
+    assertEssayLength(checked.text, outline.wordCountTarget);
 
     console.log(`Words: ${countWords(checked.text)}`);
 
-    const formatted = formatOutput(args, checked.text);
+    const formatted = formatOutput(args, checked.text, title);
     await save(checked.text, factcheckRecord(checked));
 
     return formatted;

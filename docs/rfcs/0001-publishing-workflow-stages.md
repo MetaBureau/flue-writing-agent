@@ -1,7 +1,7 @@
 # RFC 0001: Align writing stages with an AI-era publishing workflow
 
-- Status: Draft. Phase 0 is implemented except the actual-cost half of item 5. Phase 1 items 1–6 are implemented. Items 7–9 are not approved. Phase 2 items 1–3, 6, and 7 are implemented. Items 4, 5, and 8 are not.
-- Date: 2026-09-17 (updated 2026-09-17: pet-cat findings, Phase 0, peer review, then Phase 1 items 1–6)
+- Status: Draft. Phase 0 is implemented except the actual-cost half of item 5. Phase 1 items 1–6 are implemented. Item 4 now treats length as a commission with an 85% floor; a short essay is an error. Items 7–9 are not approved. Phase 2 items 1–3, 6, and 7 are implemented. Items 4, 5, and 8 are not.
+- Date: 2026-09-17 (updated 2026-09-17: length is a commission, not a hint)
 - Author: Stew Milne
 - Scope: `src/workflow.ts`, `src/main.ts`, `src/complete.ts`, `src/providers.ts`, `src/notes.ts`, `src/agents/write.ts`, `src/agents/writer.ts`, `src/skills/`, `src/contract.ts`, `islands/WriteForm.tsx`
 
@@ -23,12 +23,12 @@ The form and the CLI run the same stages. One provider and model (chosen in the 
 
 | Stage in code | Publishing equivalent | How close |
 |---|---|---|
-| — | **Commission / brief** (angle, audience, purpose, length) | **Missing.** The topic string is the whole brief. Only the word count is read from it (`wordCountFromTopic`). |
-| `research` (`src/notes.ts`) | **Reporting** | **Partial.** Notes-only is sound discipline. But it runs one search, keeps at most 5 excerpts of 180 words each, never judges source quality, and has no primary sources. |
+| — | **Commission / brief** (angle, audience, purpose, length) | **Partial.** The form length select is the commission for word count, with an 85% save floor. Angle, audience, and purpose still live in the topic string. |
+| `research` (`src/notes.ts`) | **Reporting** | **Partial.** Notes-only is sound. Search volume now scales with the requested length (up to 12 sources, 400-word excerpts). A second search uses outline sections. Mill domains are excluded. There are still no primary-source judgements. |
 | `outline` | **Pitch / structure** | **Partial.** Sections must come from the notes. But the structure follows whatever material turned up, not an argument. There is no main point or opening, and the prompt bans an introduction or conclusion unless the notes contain one. |
 | `drafts` + `pickDraft` | **Drafting** | **Weak.** Three drafts are written, but `pickDraft` takes the one whose tone matches the style. The other two are never read, so two of three calls are wasted. |
 | `style` (`applyEditorialStyle`) | **Line edit / house style** | **Good fit.** `keepIfNotShortened` protects against a bad rewrite. But it merges line and copy editing, and no structural edit comes before it. |
-| `extend` (`extendDraft`) | **Fit to length** | **Out of order and unguarded.** Paragraphs are added after the style pass, so that text is never styled. `groundedInNote` only checks that at least 3 content words overlap with a note, which is not a fact check. It calls the model for every note paragraph, up to 3 rounds, however many attempts fail. |
+| `extend` (`extendDraft`) | **Fit to length** | **Commission.** The form length is the target. Extend weaves until the essay reaches that count or hits the call cap. Style may cut praise but not below 85% of the request. A shorter save is an error. Filling from mill notes is still forbidden. |
 | — | **Fact-check** | **Missing.** No claim is checked against its source. |
 | — | **Attribution / citations** | **Missing.** The notes carry source URLs, but the essay never cites them. |
 | — | **Headline, standfirst (summary line under the headline), SEO** | **Missing.** The outline title is used as the headline, unedited. |
@@ -225,7 +225,7 @@ Items 1–5 can ship after Phase 0. Item 6 needs Phase 0's usage log (item 5), n
 1. Reject expansions that are not prose: numbered or bulleted lines, scratch-work phrases ("let's count", "wait,"), and text that does not start with a capital letter. Add a test using the pet-cat scratch work.
 2. Detect repeats against every existing paragraph by shared-word ratio, not a count of new words.
 3. Drop notes that describe the source page itself ("this essay contains N words", "students can use") before the outline, and give that text to every stage. Leave out `Source:` / `URL:` lines when extending, not before. The drafts still need the source titles and URLs.
-4. Run `extend` before `style`, so all text is styled, and stop when no good notes are left rather than always filling to target. When extend added words, style may not return a piece shorter than the draft before extend.
+4. Run `extend` before `style`. Length is the commission: drafts write toward the requested count, research scales with it, and extend weaves until the count or the call cap. Style may cut praise, not length below 85% of the request (`essayLengthFloor`). Saving a shorter essay is a failed run. Do not fill the count from mill-page notes.
 5. Remove a leading `#` title from the draft. Stop writing `## Style:` into the essay in `workflow.ts`, `main.ts`, and `writer.ts`.
 6. Save the notes, model, and run cost next to the essay (`output/<slug>.notes.md`).
 7. Write one draft in the voice from `VOICE_FOR_STYLE` instead of three.
@@ -275,7 +275,7 @@ Fact-check runs after style so the style pass cannot rewrite the links away. `re
 - Should the fact-checker cut unsupported claims itself, or flag them for a person? Phase 2 flags them. Cutting a first-hand topic fact that has no URL waits for approval.
 - What citation format suits the target publications: inline links, footnotes, or a source list? Phase 2 uses inline markdown links plus a source list.
 - Where does human approval live for the CLI: an interactive prompt or a saved draft to approve later?
-- Does length fitting belong in the line edit (cut to fit) or in the structural edit?
+- Length fitting belongs in extend, with a hard floor at 85% of the request. Style may cut praise down to that floor. A short save is an error.
 - For HaiMaker support: should truncated reasoning ever appear in `content` rather than `reasoning_content`, as it did in the pet-cat run? (Not blocking: Phase 0 rejects `length`.)
 - Does the request `user` land in spend-log `end_user`, and does `/spend/logs/v2?end_user=` filter by it? (Blocks only the actual-cost half of Phase 0 item 5; the estimate can ship. Verify with one tagged call.)
 - Does HaiMaker pass Gemini `thinkingConfig` through `generateContent`, and Anthropic `thinking` through `/v1/messages`?

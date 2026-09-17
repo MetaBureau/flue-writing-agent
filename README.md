@@ -34,7 +34,7 @@ Options:
   --verbose           Show detailed progress
   --dry-run           Show config without running
 
-Length defaults to 900 words. Put a count in the topic (`200 words`) to override.
+Length defaults to 900 words. Put a count in the topic (`200 words`) to override. The saved essay must be at least 85% of that count.
 ```
 
 **Examples:**
@@ -107,7 +107,7 @@ src/
 4. **Draft**: Write conversational, professional, and analytical drafts
 5. **Select**: Keep the draft voice that matches `--style`
 6. **Extend**: Add unused on-topic facts from notes that are not about the source page. Stop when those notes are gone, not by looping until the word floor
-7. **Style pass**: Rewrite the extended draft. Cut praise, repetition, ads, and biographies. Keep names, numbers, and URLs
+7. **Style pass**: Rewrite the extended draft into one essay. Cut praise, repetition, ads, and biographies. Keep names and numbers already in the draft. Do not keep a paragraph per source
 8. **Fact-check**: Match claims to note URLs with a different model when one is configured. Cite supported claims. Flag unsupported claims. Do not cut them
 9. **Save**: Print the essay and write `output/<slug>.md` plus `output/<slug>.notes.md` (notes, model, estimate). No `## Style:` line in the essay
 

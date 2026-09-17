@@ -5,6 +5,7 @@ import {
   type RunMeter,
   streamChat,
 } from "../complete.ts";
+import { DEFAULT_ESSAY_LENGTH, essayLengthFloor } from "../contract.ts";
 
 export type SourceNotes = { readonly text: string; readonly topic?: string };
 export type EditorialStyle =
@@ -38,7 +39,7 @@ export interface Draft {
   content: string;
 }
 
-export const DEFAULT_WORD_COUNT = 900;
+export const DEFAULT_WORD_COUNT = DEFAULT_ESSAY_LENGTH;
 export const MAX_EXTENSIONS = 6;
 export const MAX_EXTEND_CALLS = 6;
 export const MAX_CONSECUTIVE_REJECTS = 3;
@@ -46,6 +47,25 @@ export const EXTENSION_ASK_RATIO = 1.5;
 export const OUTLINE_MAX_TOKENS = 4096;
 export const DRAFT_MAX_TOKENS = 4096;
 export const REPEAT_RATIO = 0.6;
+
+export function completionTokensForLength(words: number): number {
+  return Math.min(8192, Math.max(DRAFT_MAX_TOKENS, Math.ceil(words * 2.5)));
+}
+
+export function bodyWordCount(markdown: string): number {
+  const withoutSources = markdown.split(/\n## Sources\s*\n/)[0] ?? markdown;
+  return countWords(stripLeadingTitle(withoutSources));
+}
+
+export function assertEssayLength(text: string, target: number): void {
+  const words = bodyWordCount(text);
+  const floor = essayLengthFloor(target);
+  if (words < floor) {
+    throw new Error(
+      `Essay is ${words} words; ${target} were requested (minimum ${floor}).`,
+    );
+  }
+}
 
 export function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
@@ -90,7 +110,12 @@ export function describesSourcePage(paragraph: string): boolean {
   return /students can use/i.test(paragraph) ||
     /contains \d+ words/i.test(paragraph) ||
     /contains (?:one|two|three|four|five|six|seven|eight|nine|\d+) hundred words/i
-      .test(paragraph);
+      .test(paragraph) ||
+    /admissions essays?/i.test(paragraph) ||
+    /how to write/i.test(paragraph) ||
+    /essay writing/i.test(paragraph) ||
+    /writing an? essay/i.test(paragraph) ||
+    /tips for writing/i.test(paragraph);
 }
 
 export function draftingNotes(notes: string): string {
@@ -105,6 +130,51 @@ export function factualNotes(notes: string): string[] {
     .filter((paragraph) =>
       countWords(paragraph) >= 15 && !describesSourcePage(paragraph)
     );
+}
+
+function sentencesOf(paragraph: string): string[] {
+  return paragraph.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/).filter(
+    Boolean,
+  );
+}
+
+export function writerFacts(notes: string): string {
+  const facts = factualNotes(notes);
+  if (facts.length === 0) return draftingNotes(notes);
+  const buckets = facts.map(sentencesOf);
+  const mixed: string[] = [];
+  const longest = Math.max(...buckets.map((bucket) => bucket.length));
+  for (let index = 0; index < longest; index++) {
+    for (const bucket of buckets) {
+      const sentence = bucket[index];
+      if (sentence) mixed.push(sentence);
+    }
+  }
+  return mixed.join(" ");
+}
+
+export function exclusiveNoteParagraphs(text: string, notes: string): number {
+  const paragraphs = noteParagraphs(text).filter((paragraph) =>
+    countWords(paragraph) >= 15 && !paragraph.startsWith("#")
+  );
+  const facts = factualNotes(notes);
+  if (facts.length < 3) return 0;
+  let exclusive = 0;
+  for (const paragraph of paragraphs) {
+    const matched = facts.filter((fact) =>
+      sharedWordRatio(paragraph, fact) >= 0.3
+    );
+    if (matched.length === 1) exclusive += 1;
+  }
+  return exclusive;
+}
+
+export function isSourceCollage(text: string, notes: string): boolean {
+  const paragraphs = noteParagraphs(text).filter((paragraph) =>
+    countWords(paragraph) >= 15 && !paragraph.startsWith("#")
+  );
+  if (paragraphs.length < 3) return false;
+  return exclusiveNoteParagraphs(text, notes) >= 2;
 }
 
 export function isProseExpansion(text: string): boolean {
@@ -122,8 +192,71 @@ export function stripLeadingTitle(text: string): string {
   return text.replace(/^\uFEFF?\s*# [^\n]*\n*/, "").trim();
 }
 
+export function publishedTitle(
+  topic: string,
+  outlineTitle: string,
+  body: string,
+): string {
+  const titled = outlineTitle.trim();
+  if (titled && titled.toLowerCase() !== topic.trim().toLowerCase()) {
+    return titled;
+  }
+  const first = stripLeadingTitle(body).split(/(?<=[.!?])\s+/)[0] ?? "";
+  const words = first.replace(/[.!?]+$/, "").split(/\s+/).filter(Boolean).slice(
+    0,
+    8,
+  );
+  return words.length >= 4 ? words.join(" ") : titled || topic.trim();
+}
+
 export function essayMarkdown(title: string, body: string): string {
   return `# ${title.trim()}\n\n${stripLeadingTitle(body)}\n`;
+}
+
+export function finishEssay(
+  title: string,
+  text: string,
+  floorWords = 0,
+): string {
+  const titled = title.trim().toLowerCase();
+  const kept: string[] = [];
+  for (const paragraph of noteParagraphs(stripLeadingTitle(text))) {
+    const sentences = paragraph.replace(/\s+/g, " ").trim().split(
+      /(?<=[.!?])\s+/,
+    ).filter((sentence) => {
+      if (!sentence) return false;
+      if (sentence.replace(/[.!?]+$/, "").trim().toLowerCase() === titled) {
+        return false;
+      }
+      if (/\b(?:and|or|of|the)\s*[.!?]\s*$/i.test(sentence)) return false;
+      if (
+        /^[A-Z][^.]{0,60}\b(?:describes|refers to|is defined as)\b/i.test(
+          sentence,
+        )
+      ) return false;
+      if (/^(?:these|this) include\b/i.test(sentence)) return false;
+      if (
+        /\b(?:working group|this paper|this study|this article|this framework|points out)\b/i
+          .test(sentence)
+      ) return false;
+      return true;
+    });
+    const next = sentences.join(" ").trim();
+    if (!next) continue;
+    if (kept.some((prior) => sharedWordRatio(prior, next) >= REPEAT_RATIO)) {
+      continue;
+    }
+    kept.push(next);
+  }
+  const cleaned = kept.join("\n\n");
+  const original = stripLeadingTitle(text);
+  if (
+    floorWords > 0 && countWords(cleaned) < floorWords &&
+    countWords(original) >= floorWords
+  ) {
+    return original;
+  }
+  return cleaned;
 }
 
 export function notesRecord(input: {
@@ -229,12 +362,15 @@ export function extendShouldContinue(
   return !extendShouldStop(calls, consecutiveRejects);
 }
 
-const FALLBACK_OUTLINE = (topic: string): Outline => ({
+const FALLBACK_OUTLINE = (
+  topic: string,
+  words = wordCountFromTopic(topic),
+): Outline => ({
   title: topic.split(" ").slice(0, 4).join(" "),
   sections: [
     topic.split(/[.\n]/).map((line) => line.trim()).find(Boolean) ?? "Notes",
   ],
-  wordCountTarget: wordCountFromTopic(topic),
+  wordCountTarget: words,
 });
 
 function isOutline(value: unknown): value is Outline {
@@ -281,7 +417,7 @@ export function systemMessage(notes: string, instruction: string): ChatMessage {
 }
 
 export const OUTLINE_SYSTEM =
-  "Return a JSON outline. Every section must name material already in the notes. Do not invent sections.";
+  "Return a JSON outline for one essay. Use only facts in the notes. Do not invent a fact.";
 
 export const OUTLINE_RESPONSE_FORMAT = {
   type: "json_schema",
@@ -302,34 +438,39 @@ export const OUTLINE_RESPONSE_FORMAT = {
 };
 
 export function outlineUserPrompt(
-  notes: string,
-  words = wordCountFromTopic(notes),
+  topic: string,
+  words = wordCountFromTopic(topic),
 ): string {
   return [
-    `Outline a ${words}-word post that uses only these notes.`,
+    `The essay is about: ${topic}.`,
+    `Outline a ${words}-word essay. The notes are the only facts.`,
     "Return JSON: {title: string, sections: string[], wordCountTarget: number}",
-    "Each section is a heading for claims already written in the notes.",
-    "Do not split one claim into several headings. Four sections at most.",
-    "Do not add introduction, conclusion, future work, recommendations, or roadmap unless the notes already contain that material.",
+    "The opening states one claim about that topic. Every section advances that claim. Four sections at most.",
+    "The opening and the close may only frame facts already in the notes. Do not invent a fact, a prediction, or a recommendation.",
+    "The notes are one set of facts, not a list of sections. Do not make a section for each source.",
     "Do not use a company self-description heading such as Who are we.",
   ].join("\n\n");
 }
 
 export const DRAFT_SYSTEM =
-  "Write only facts that appear in the source notes. Do not add motives, rankings, roadmaps, praise, or a closing the notes do not contain.";
+  "Write one essay. The notes are the only facts. Do not add motives, rankings, praise, or predictions the notes do not contain.";
 
 export function draftUserPrompt(
   instruction: string,
   outline: Pick<Outline, "title" | "sections" | "wordCountTarget">,
+  topic = "",
 ): string {
   const sections = outline.sections.map((section) => `- ${section}`).join("\n");
   return [
+    topic ? `The essay is about: ${topic}.` : "Write the essay.",
     `${instruction}.`,
     `Title: ${outline.title}`,
     `Sections, in this order:\n${sections}`,
-    "Use only facts from the notes. Cover the product facts in the notes. Say each fact once. Stop when those facts are covered.",
-    "Do not copy mission statements, passion, or first-person company voice.",
-    "Do not add a closing paragraph. Do not add praise, predictions, or facts that are not in the notes.",
+    "The notes are one set of facts, not a list of sections. The opening states one claim about that topic. Every paragraph advances that claim. Do not give each source its own paragraph.",
+    `Write about ${outline.wordCountTarget} words. Use only facts from the notes. Close on a fact you already used.`,
+    "Do not paste source titles, URLs, or markdown links. Citations are added later.",
+    "Say each fact once. Write each fact in full sentences. Leave out notes that are not about the subject.",
+    "Do not add praise, predictions, or facts that are not in the notes.",
   ].join("\n\n");
 }
 
@@ -348,6 +489,39 @@ export function extensionUserPrompt(
     `Source notes:\n${notes}`,
     `Draft so far:\n${draft}`,
   ].join("\n\n");
+}
+
+export function weaveUserPrompt(
+  topic: string,
+  draft: string,
+  target: number,
+): string {
+  return [
+    `The essay is about: ${topic}.`,
+    `Return the full essay of about ${target} words. It is ${
+      countWords(draft)
+    } words. Keep every fact already in the draft. Weave unused notes until the essay reaches ${target} words.`,
+    "The notes are one set of facts, not a list of sections. Keep the opening claim. Weave unused facts into the paragraphs they belong to.",
+    "Do not add a paragraph for each source. Do not repeat a point. Do not add a fact that is not in the notes.",
+    "Do not paste source titles, URLs, or markdown links. End with a complete sentence. Return only the essay.",
+  ].join("\n\n");
+}
+
+export function isAppendedDump(draft: string, next: string): boolean {
+  const base = draft.replace(/\s+/g, " ").trim();
+  const woven = next.replace(/\s+/g, " ").trim();
+  if (base.length < 40 || woven.length <= base.length) return false;
+  return woven.startsWith(base);
+}
+
+export function acceptWovenEssay(draft: string, next: string): boolean {
+  const woven = next.trim();
+  if (!isProseExpansion(woven) || !endsAsSentence(woven)) return false;
+  if (isAppendedDump(draft, woven)) return false;
+  const words = countWords(woven);
+  const base = countWords(draft);
+  if (words < Math.max(80, Math.floor(base * 0.8))) return false;
+  return groundedInNote(draft, woven);
 }
 
 export function expansionUserPrompt(
@@ -406,17 +580,18 @@ export const generateOutline = async (
   model: ModelConfig,
   meter?: RunMeter,
   supportedParams?: readonly string[],
+  words?: number,
 ): Promise<Outline> => {
   const topic = notes.topic ?? notes.text;
-  const words = wordCountFromTopic(topic);
+  const target = words ?? wordCountFromTopic(topic);
   if (!model.apiKey) {
     console.warn(`${model.name} key not set, using heuristic outline`);
-    return FALLBACK_OUTLINE(topic);
+    return FALLBACK_OUTLINE(topic, target);
   }
 
   const content = (await streamChat(model, [
-    systemMessage(notes.text, OUTLINE_SYSTEM),
-    { role: "user", content: outlineUserPrompt(notes.text, words) },
+    systemMessage(writerFacts(notes.text), OUTLINE_SYSTEM),
+    { role: "user", content: outlineUserPrompt(topic, target) },
   ], {
     temperature: 0.2,
     label: "outline",
@@ -427,7 +602,7 @@ export const generateOutline = async (
   })).content;
 
   const outline = parseOutline(content, topic);
-  outline.wordCountTarget = words;
+  outline.wordCountTarget = target;
   return outline;
 };
 
@@ -465,15 +640,15 @@ export const generateDrafts = async (
   const drafts: Draft[] = [];
   for (const { name, instruction } of styles) {
     const content = (await streamChat(model, [
-      systemMessage(notes.text, DRAFT_SYSTEM),
+      systemMessage(writerFacts(notes.text), DRAFT_SYSTEM),
       {
         role: "user",
-        content: draftUserPrompt(instruction, outline),
+        content: draftUserPrompt(instruction, outline, notes.topic),
       },
     ], {
       temperature: 0.3,
       label: `draft:${name}`,
-      maxTokens: DRAFT_MAX_TOKENS,
+      maxTokens: completionTokensForLength(outline.wordCountTarget),
       meter,
     })).content;
     drafts.push({
@@ -497,68 +672,55 @@ export async function extendDraft(
   model: ModelConfig,
   label: string,
   meter?: RunMeter,
+  topic = "",
 ): Promise<string> {
   let text = draft.trim();
-  let words = countWords(text);
-  if (!model.apiKey || words >= target) return text;
-
-  const paragraphs = factualNotes(notes);
-  if (paragraphs.length === 0) return text;
+  if (!model.apiKey || factualNotes(notes).length === 0) return text;
   let calls = 0;
-  let consecutiveRejects = 0;
-  let notesLeft = paragraphs.length;
-  for (let index = 0; index < paragraphs.length; index++) {
-    if (
-      !extendShouldContinue(
-        words,
-        target,
-        notesLeft,
-        calls,
-        consecutiveRejects,
-      )
-    ) break;
-    notesLeft -= 1;
+  let rejects = 0;
+  while (
+    extendShouldContinue(
+      countWords(text),
+      target,
+      factualNotes(notes).length,
+      calls,
+      rejects,
+    )
+  ) {
     calls += 1;
-    const each = Math.max(40, Math.ceil((target - words) / paragraphs.length));
-    const note = paragraphs[index];
-    let extra = "";
+    let woven = "";
     try {
-      extra = (await streamChat(model, [
-        systemMessage(notes, `${DRAFT_SYSTEM}\n\nDraft so far:\n${text}`),
-        { role: "user", content: expansionUserPrompt(note, each, "") },
+      woven = (await streamChat(model, [
+        systemMessage(
+          writerFacts(notes),
+          `${DRAFT_SYSTEM}\n\nDraft so far:\n${text}`,
+        ),
+        { role: "user", content: weaveUserPrompt(topic, text, target) },
       ], {
-        temperature: 0.7,
-        label: `${label}:expand:${index + 1}`,
-        maxTokens: expansionTokenBudget(each),
+        temperature: 0.4,
+        label: `${label}:weave`,
+        maxTokens: completionTokensForLength(target),
         meter,
       })).content;
     } catch (error) {
       if (!(error instanceof CutOffReply)) throw error;
-      consecutiveRejects += 1;
-      console.log(
-        `[${label}:expand:${index + 1}] discarded cut-off reply`,
-      );
+      console.log(`[${label}:weave] discarded cut-off reply`);
+      rejects += 1;
       continue;
     }
-    const fitted = fitExtension(extra, each);
-    if (!acceptExpansion(note, fitted, each, text)) {
-      consecutiveRejects += 1;
-      console.log(
-        `[${label}:expand:${index + 1}] rejected raw=${
-          countWords(extra)
-        } fitted=${countWords(fitted)}`,
-      );
+    const next = stripLeadingTitle(woven);
+    if (!acceptWovenEssay(text, next) || countWords(next) <= countWords(text)) {
+      console.log(`[${label}:weave] rejected ${countWords(next)} words`);
+      rejects += 1;
       continue;
     }
-    consecutiveRejects = 0;
-    const merged = mergeExtension(text, fitted);
-    const next = countWords(merged);
-    if (next <= words) continue;
-    text = merged;
-    words = next;
     console.log(
-      `[${label}:expand:${index + 1}] ${words} words, target ${target}`,
+      `[${label}:weave] ${countWords(text)} -> ${
+        countWords(next)
+      } words, target ${target}`,
     );
+    text = next;
+    rejects = 0;
   }
   return text;
 }

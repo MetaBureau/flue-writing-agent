@@ -1,5 +1,10 @@
 import { define } from "../../define.ts";
-import type { WriteEvent } from "../../src/contract.ts";
+import {
+  DEFAULT_ESSAY_LENGTH,
+  ESSAY_LENGTHS,
+  isEssayLength,
+  type WriteEvent,
+} from "../../src/contract.ts";
 import { STYLE_NAMES, isStyleName } from "../../src/skills/styles.ts";
 import { PROVIDERS, isProviderModel } from "../../src/providers.ts";
 import { writeStages } from "../../src/workflow.ts";
@@ -10,6 +15,7 @@ function eventStream(input: {
   provider?: string;
   model?: string;
   checkModel?: string;
+  words: number;
 }): Response {
   const stream = new ReadableStream({
     async start(controller) {
@@ -43,12 +49,14 @@ export const handler = define.handlers({
       provider?: string;
       model?: string;
       checkModel?: string;
+      words?: number;
     } | null;
     const topic = body?.topic?.trim() ?? "";
     const style = body?.style ?? "professional";
     const provider = body?.provider || undefined;
     const model = body?.model || undefined;
     const checkModel = body?.checkModel || undefined;
+    const words = body?.words ?? DEFAULT_ESSAY_LENGTH;
     if (!topic) {
       return Response.json({ error: "Topic is required." }, { status: 400 });
     }
@@ -67,6 +75,12 @@ export const handler = define.handlers({
     if (checkModel && !isProviderModel("haimaker", checkModel)) {
       return Response.json({ error: "Unknown checker model." }, { status: 400 });
     }
-    return eventStream({ topic, style, provider, model, checkModel });
+    if (!isEssayLength(words)) {
+      return Response.json(
+        { error: `Length must be one of ${ESSAY_LENGTHS.join(", ")} words.` },
+        { status: 400 },
+      );
+    }
+    return eventStream({ topic, style, provider, model, checkModel, words });
   },
 });

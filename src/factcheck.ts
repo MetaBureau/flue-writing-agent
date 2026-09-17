@@ -1,7 +1,15 @@
-import { describesSourcePage, sharedWordRatio, systemMessage } from "./agents/write.ts";
+import {
+  describesSourcePage,
+  sharedWordRatio,
+  systemMessage,
+} from "./agents/write.ts";
 import { CutOffReply, type RunMeter, streamChat } from "./complete.ts";
 import type { SearchHit } from "./notes.ts";
-import { PROVIDERS, type ResolvedProvider, resolveProvider } from "./providers.ts";
+import {
+  PROVIDERS,
+  type ResolvedProvider,
+  resolveProvider,
+} from "./providers.ts";
 
 export interface ClaimVerdict {
   text: string;
@@ -103,7 +111,10 @@ export function checkerReplacement(
   return `${label} ${asked} matches the writer; using ${used}`;
 }
 
-export function checkModelId(writerModelId: string, requested?: string): string {
+export function checkModelId(
+  writerModelId: string,
+  requested?: string,
+): string {
   const chosen = requested?.trim() || envCheckModel() || DEFAULT_CHECK_MODEL;
   const id = listedCheckModel(chosen) ? chosen : DEFAULT_CHECK_MODEL;
   if (id !== writerModelId) return id;
@@ -153,10 +164,18 @@ export function factcheckRecord(result: FactCheckResult): string {
     result.detail,
   ];
   if (result.unsupportedClaims.length > 0) {
-    lines.push("", "Unsupported:", ...result.unsupportedClaims.map((claim) => `- ${claim}`));
+    lines.push(
+      "",
+      "Unsupported:",
+      ...result.unsupportedClaims.map((claim) => `- ${claim}`),
+    );
   }
   if (result.uncheckedClaims.length > 0) {
-    lines.push("", "Unchecked:", ...result.uncheckedClaims.map((claim) => `- ${claim}`));
+    lines.push(
+      "",
+      "Unchecked:",
+      ...result.uncheckedClaims.map((claim) => `- ${claim}`),
+    );
   }
   return lines.join("\n");
 }
@@ -184,8 +203,6 @@ export function applyFactCheck(
     if (verdict.status === "supported" && hit) {
       supported += 1;
       cited.set(hit.url, hit);
-      const link = markdownLink(hit.title, hit.url);
-      result = result.replace(claim, () => `${claim} (${link})`);
       continue;
     }
     unsupportedClaims.push(claim);

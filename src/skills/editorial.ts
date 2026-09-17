@@ -1,5 +1,14 @@
+import { essayLengthFloor } from "../contract.ts";
 import { CutOffReply, type RunMeter, streamChat } from "../complete.ts";
-import { countWords, endsAsSentence, systemMessage } from "../agents/write.ts";
+import {
+  countWords,
+  endsAsSentence,
+  exclusiveNoteParagraphs,
+  isSourceCollage,
+  stripLeadingTitle,
+  systemMessage,
+  writerFacts,
+} from "../agents/write.ts";
 import { ResolvedProvider } from "../providers.ts";
 import {
   isStyleName,
@@ -32,15 +41,36 @@ export function keepIfNotShortened(
   return next;
 }
 
-export function styleUserPrompt(text: string, wordCountTarget: number): string {
+export function styleUserPrompt(
+  text: string,
+  wordCountTarget: number,
+  topic = "",
+): string {
   const current = countWords(text);
   return [
-    "Rewrite into the style. Cut praise, passion, mission statements, and sentences that repeat a point already made.",
-    "Drop ads, author biographies, view counts, music credits, and any sentence that is not about the subject.",
-    "Keep names, numbers, URLs, and product claims.",
-    "Do not add facts, sections, or a conclusion.",
-    `It is ${current} words. Do not pad it toward ${wordCountTarget} words.`,
-    "Keep markdown links. Return only the rewritten draft.",
+    topic
+      ? `Edit this into one essay about: ${topic}.`
+      : "Edit this into one essay.",
+    "The opening states one claim about that topic. Every paragraph advances that claim. Do not give each source its own paragraph.",
+    "Cut praise, a repeated point, an unfinished sentence, and any sentence about the researchers, the working group, or the paper itself.",
+    "Do not repeat the title. Do not use an abbreviation you have not written out.",
+    "You may shape the opening and the close only from facts already in the draft. Do not add facts.",
+    `It is ${current} words. Keep at least ${
+      essayLengthFloor(wordCountTarget)
+    } words. Cut praise and repetition, not the facts that make the length.`,
+    "Do not write source titles or new markdown links. Keep a markdown link already in the draft. Return only the rewritten draft.",
+  ].join("\n\n");
+}
+
+export function collapseUserPrompt(topic: string): string {
+  return [
+    topic
+      ? `Rewrite this as one essay about: ${topic}.`
+      : "Rewrite this as one essay.",
+    "The draft is a source survey. That is rejected.",
+    "Three or four paragraphs. The first states one claim. Later paragraphs use facts from more than one note.",
+    "Do not give a note its own paragraph. Do not start a sentence with a definition.",
+    "Cut praise. Close on a fact already in the draft. Do not add facts. Return only the essay.",
   ].join("\n\n");
 }
 
@@ -52,6 +82,7 @@ export const applyEditorialStyle = async (
   meter?: RunMeter,
   floorWords = 0,
   notes = "",
+  topic = "",
 ): Promise<string> => {
   const style = isStyleName(styleName)
     ? styles[styleName]
@@ -64,9 +95,12 @@ export const applyEditorialStyle = async (
       const instruction = `${styleSystemPrompt(style)}\n\nDraft:\n${text}`;
       edited = (await streamChat(model, [
         notes
-          ? systemMessage(notes, instruction)
+          ? systemMessage(writerFacts(notes), instruction)
           : { role: "system", content: instruction },
-        { role: "user", content: styleUserPrompt(text, wordCountTarget) },
+        {
+          role: "user",
+          content: styleUserPrompt(text, wordCountTarget, topic),
+        },
       ], {
         temperature: 0.2,
         label: `style:${styleName}`,
@@ -93,5 +127,42 @@ export const applyEditorialStyle = async (
     result = kept;
   }
 
-  return result;
+  if (!notes || !model.apiKey || !isSourceCollage(result, notes)) return result;
+  console.log(`[style:${styleName}] source collage; rewriting as one essay`);
+  let collapsed = "";
+  try {
+    collapsed = (await streamChat(model, [
+      systemMessage(
+        writerFacts(notes),
+        `${styleSystemPrompt(style)}\n\nDraft:\n${result}`,
+      ),
+      { role: "user", content: collapseUserPrompt(topic) },
+    ], {
+      temperature: 0.2,
+      label: `style:${styleName}:essay`,
+      maxTokens: 4096,
+      meter,
+    })).content;
+  } catch (error) {
+    if (!(error instanceof CutOffReply)) throw error;
+    console.log(`[style:${styleName}] discarded cut-off collage rewrite`);
+    return result;
+  }
+  const next = stripLeadingTitle(collapsed);
+  const words = countWords(next);
+  const before = exclusiveNoteParagraphs(result, notes);
+  const after = exclusiveNoteParagraphs(next, notes);
+  const improved = after < before || !isSourceCollage(next, notes);
+  if (!endsAsSentence(next) || words < Math.max(80, floorWords) || !improved) {
+    console.log(
+      `[style:${styleName}] collage rewrite rejected (${words} words, exclusive ${before} -> ${after})`,
+    );
+    return result;
+  }
+  console.log(
+    `[style:${styleName}] collage rewritten (${countWords(result)} -> ${
+      countWords(next)
+    })`,
+  );
+  return next;
 };

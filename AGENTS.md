@@ -77,7 +77,7 @@ Default section order:
 
 ## This Project
 
-Deno Fresh UI plus a Flue agent. `deno task dev` serves the form on port 5175. The form posts topic, style, provider, model, and checker model to `/api/write`. That route streams stage events and then the essay markdown for the page.
+Deno Fresh UI plus a Flue agent. `deno task dev` serves the form on port 5175. The form can interview the user and fill the topic from that prompt, then posts topic, length, style, provider, model, and checker model to `/api/write`. That route streams stage events, then notes, each draft, and the essay as viewable pieces, then the essay markdown. The page opens each piece in a modal and downloads it as `.md`.
 
 - UI: `deno task dev` on port 5175. Keep that port.
 - `deno.json` sets `"workspace": []` so Fresh boots here without joining the parent MetaBureau workspace. Do not remove that field.
@@ -85,10 +85,11 @@ Deno Fresh UI plus a Flue agent. `deno task dev` serves the form on port 5175. T
 - `deno install` needs `--minimum-dependency-age=0` while `package.json` depends on a recently published `@flue/cli`.
 - CLI entry: `src/main.ts` via `deno task start "<topic>"`
 - Stack: Deno, OpenAI-compatible `/chat/completions`, optional Tavily
-- Length defaults to 900 words; a count in the topic (`200 words`) overrides
+- Length defaults to 900 words. The form select is the page length and overrides a count in the topic. Options are 500, 700, 900, 1200, 1500, 2000, 2500, 3000, 3500, 4000, 4500, and 5000. The CLI still reads a count from the topic (`200 words`). The saved essay must be at least 85% of that count. A shorter piece is an error, not a successful save.
+- The form interview asks one question at a time, using the writer model, and fills the topic from the user's answers. It does not research and does not invent facts. Length stays on the length select
 - When the form or `--model` sets a model, that model runs the writing stages. Fact-check uses a separate HaiMaker model (`CHECK_MODEL`, default `openai/gpt-4.1`). Without `HAIMAKER_API_KEY`, fact-check is skipped and the essay is still saved. Without a writer override, fast and reasoning env vars can still differ
-- Do not invent facts, sections, praise, predictions, or closings the notes do not contain
-- `output/` is generated; do not hand-edit it as source
+- Do not invent facts, praise, or predictions the notes do not contain. An opening and a close may only frame facts already in the notes
+- `output/` is generated; do not hand-edit it as source. Vite ignores `output/` so saving an essay does not reload the form
 - Root `write.ts` is a HaiMaker scratch script; the product writer is `src/agents/write.ts`
 - `HAIMAKER.md` and `Mercury2.5_economist.md` are operator notes / sample output, not runtime
 
