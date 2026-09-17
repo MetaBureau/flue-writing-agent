@@ -256,7 +256,7 @@ export async function* writeStages(input: {
       type: "piece",
       piece: criticPiece(
         slug,
-        `${criticSidecar(review, [...harness, ...leftover])}\n`,
+        `${criticSidecar(review, leftover)}\n`,
       ),
     };
     yield {
