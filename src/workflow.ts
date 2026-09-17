@@ -16,6 +16,7 @@ import {
   citableHits,
   factcheckRecord,
   resolveChecker,
+  uncheckedResult,
 } from "./factcheck.ts";
 import { formatRun, RunMeter } from "./complete.ts";
 import { type StageId, type WriteEvent } from "./contract.ts";
@@ -43,6 +44,7 @@ export async function* writeStages(input: {
   const fast = resolveProvider(providerName, "fast", input.model);
   const reasoning = resolveProvider(providerName, "reasoning", input.model);
   const keyProblem = providerKeyProblem(providerName);
+  const checker = resolveChecker(fast.modelId, input.checkModel);
   const catalog = await loadModelHub().catch(() => new Map());
   const prices = pricesFromCatalog(catalog);
   const meter = new RunMeter();
@@ -52,6 +54,7 @@ export async function* writeStages(input: {
     yield { type: "error", stage: "outline", error: keyProblem };
     return;
   }
+  if (!checker.apiKey) console.log("no HaiMaker key; not checked");
 
   let stage: StageId = "research";
   try {
@@ -59,7 +62,9 @@ export async function* writeStages(input: {
       type: "stage",
       id: "research",
       status: "active",
-      detail: "Searching notes",
+      detail: checker.apiKey
+        ? "Searching notes"
+        : "Searching notes · no HaiMaker key; not checked",
     };
     const research = await gatherResearch(input.topic);
     const notes = {
@@ -141,34 +146,52 @@ export async function* writeStages(input: {
     stage = "factcheck";
     yield { type: "stage", id: "factcheck", status: "active" };
     const hits = citableHits(research.hits);
-    const checker = resolveChecker(fast.modelId, input.checkModel);
-    const checked = await checkClaims(
-      content,
-      hits,
-      checker,
-      notes.text,
-      meter,
-    );
+    const slug = topicSlug(outline.title || input.topic);
+    const save = async (checked: Awaited<ReturnType<typeof checkClaims>>) => {
+      const markdown = essayMarkdown(outline.title, checked.text);
+      await writeOutputFile(`output/${slug}.md`, markdown);
+      await writeOutputFile(
+        `output/${slug}.notes.md`,
+        notesRecord({
+          notes: notes.text,
+          outlineModel: reasoning.modelId ?? reasoning.name,
+          draftModel: fast.modelId ?? fast.name,
+          cost: cost(),
+          factcheck: factcheckRecord(checked),
+        }),
+      );
+      return markdown;
+    };
+    let checked: Awaited<ReturnType<typeof checkClaims>>;
+    try {
+      checked = await checkClaims(
+        content,
+        hits,
+        checker,
+        notes.text,
+        meter,
+      );
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "fact-check failed";
+      const markdown = await save(
+        uncheckedResult(content, message, checker.modelId),
+      );
+      const detail = `${message} · saved unchecked · ${checker.modelId} · ${cost()}`;
+      yield { type: "essay", markdown };
+      yield { type: "stage", id: "factcheck", status: "error", detail };
+      yield { type: "error", stage: "factcheck", error: detail };
+      return;
+    }
+    const markdown = await save(checked);
+    const note = checker.note ? ` · ${checker.note}` : "";
     yield {
       type: "stage",
       id: "factcheck",
       status: "done",
-      detail: `${checked.detail} · ${checker.modelId} · ${cost()}`,
+      detail: `${checked.detail} · ${checker.modelId}${note} · ${cost()}`,
     };
-
-    const markdown = essayMarkdown(outline.title, checked.text);
-    const slug = topicSlug(outline.title || input.topic);
-    await writeOutputFile(`output/${slug}.md`, markdown);
-    await writeOutputFile(
-      `output/${slug}.notes.md`,
-      notesRecord({
-        notes: notes.text,
-        outlineModel: reasoning.modelId ?? reasoning.name,
-        draftModel: fast.modelId ?? fast.name,
-        cost: cost(),
-        factcheck: factcheckRecord(checked),
-      }),
-    );
     yield { type: "essay", markdown };
   } catch (error) {
     const message = error instanceof Error

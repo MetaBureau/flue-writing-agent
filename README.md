@@ -93,7 +93,7 @@ src/
 ## Features
 
 - **Topic notes**: The topic string plus Tavily page excerpts. Prompts forbid extra sections, and an expansion is rejected if it is not about its note
-- **Writer and checker**: The form and `--model` run the writing stages on one model. Fact-check uses `CHECK_MODEL` or the form's checker, default `openai/gpt-4.1`, through `HAIMAKER_API_KEY`. Unsupported claims stay in the notes file, not the essay
+- **Writer and checker**: The form and `--model` run the writing stages on one model. Fact-check uses `CHECK_MODEL` or the form's checker, default `openai/gpt-4.1`, through `HAIMAKER_API_KEY`. Without that key, fact-check is skipped and the essay is still saved. Unsupported claims stay in the notes file, not the essay
 - **Style Enforcement**: Apply editorial rules (Economist, Strunk & White, Monocle, Professional)
 - **Provider Abstraction**: Unified interface for any OpenAI-compatible API (HaiMaker, Mercury)
 - **Output Formatting**: Markdown, JSON, or plain text

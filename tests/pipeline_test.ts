@@ -48,11 +48,14 @@ import {
 } from "../src/complete.ts";
 import {
   applyFactCheck,
+  checkClaims,
   checkModelId,
+  checkerReplacement,
   citableHits,
   factcheckRecord,
   markdownLink,
   splitClaims,
+  uncheckedResult,
   verdictsFromContent,
 } from "../src/factcheck.ts";
 import {
@@ -453,6 +456,18 @@ Deno.test("fact-check cites a note URL and flags an unsupported claim", () => {
     "openai/gpt-4.1",
   );
   assertEquals(
+    checkerReplacement("openai/gpt-4.1", "google/gemini-3.1-flash-lite"),
+    "checker openai/gpt-4.1 matches the writer; using google/gemini-3.1-flash-lite",
+  );
+  assertEquals(
+    checkerReplacement("not-a-model", "openai/gpt-4.1", "CHECK_MODEL"),
+    "CHECK_MODEL not-a-model is not a HaiMaker model; using openai/gpt-4.1",
+  );
+  assertEquals(
+    checkerReplacement("openai/gpt-4.1", "openai/gpt-4.1"),
+    undefined,
+  );
+  assertEquals(
     citableHits([{
       ...hits[0],
       content:
@@ -461,6 +476,41 @@ Deno.test("fact-check cites a note URL and flags an unsupported claim", () => {
     0,
   );
   assertStringIncludes(factcheckRecord(checked), other);
+});
+
+Deno.test("unchecked fact-check is recorded in the notes and keeps the essay", async () => {
+  const essay = "Domestic cats in the United States number about 86.4 million.";
+  const skipped = await checkClaims(essay, [{
+    title: "Pet survey",
+    url: "https://example.com/cats",
+    content: essay,
+  }], {
+    name: "HaiMaker",
+    provider: "haimaker",
+    modelId: "openai/gpt-4.1",
+    baseUrl: "https://api.haimaker.ai/v1",
+    apiKey: undefined,
+  }, "notes");
+  assertEquals(skipped.checked, false);
+  assertEquals(skipped.detail, "no HaiMaker key; not checked");
+  assertEquals(skipped.text, essay);
+  const failed = uncheckedResult(essay, "HTTP 401", "openai/gpt-4.1");
+  const record = factcheckRecord(failed);
+  assertStringIncludes(record, "Checker: openai/gpt-4.1");
+  assertStringIncludes(record, "HTTP 401");
+  assertStringIncludes(record, essay);
+  assertFalse(record.includes("[unsupported]"));
+  const notes = notesRecord({
+    notes: "A cat fact.",
+    outlineModel: "mercury-2.5",
+    draftModel: "mercury-2.5",
+    cost: "estimate $0.010",
+    factcheck: record,
+  });
+  assertStringIncludes(notes, "HTTP 401");
+  assertStringIncludes(notes, "Unchecked:");
+  assertStringIncludes(notes, "A cat fact.");
+  assertFalse(notes.includes("[unsupported]"));
 });
 
 Deno.test("extend stops after three rejects or six calls", () => {

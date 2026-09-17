@@ -86,7 +86,7 @@ Deno Fresh UI plus a Flue agent. `deno task dev` serves the form on port 5175. T
 - CLI entry: `src/main.ts` via `deno task start "<topic>"`
 - Stack: Deno, OpenAI-compatible `/chat/completions`, optional Tavily
 - Length defaults to 900 words; a count in the topic (`200 words`) overrides
-- When the form or `--model` sets a model, that model runs the writing stages. Fact-check uses a separate HaiMaker model (`CHECK_MODEL`, default `openai/gpt-4.1`). Without a writer override, fast and reasoning env vars can still differ
+- When the form or `--model` sets a model, that model runs the writing stages. Fact-check uses a separate HaiMaker model (`CHECK_MODEL`, default `openai/gpt-4.1`). Without `HAIMAKER_API_KEY`, fact-check is skipped and the essay is still saved. Without a writer override, fast and reasoning env vars can still differ
 - Do not invent facts, sections, praise, predictions, or closings the notes do not contain
 - `output/` is generated; do not hand-edit it as source
 - Root `write.ts` is a HaiMaker scratch script; the product writer is `src/agents/write.ts`

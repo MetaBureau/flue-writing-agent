@@ -16,6 +16,7 @@ import {
   citableHits,
   factcheckRecord,
   resolveChecker,
+  uncheckedResult,
 } from "./factcheck.ts";
 import { formatRun, RunMeter } from "./complete.ts";
 import { applyEditorialStyle } from "./skills/editorial.ts";
@@ -178,6 +179,8 @@ async function runWritingWorkflow(args: Args) {
     "reasoning",
     args.model,
   );
+  const checker = resolveChecker(fastProvider.modelId, args.checkModel);
+  if (!checker.apiKey) console.log("no HaiMaker key; not checked");
 
   if (args.dryRun) {
     console.log("=== Configuration (dry run) ===");
@@ -191,7 +194,7 @@ async function runWritingWorkflow(args: Args) {
       `Reasoning Model: ${reasoningProvider.modelId} (${reasoningProvider.baseUrl})`,
     );
     console.log(
-      `Checker: ${resolveChecker(fastProvider.modelId, args.checkModel).modelId}`,
+      `Checker: ${checker.modelId}${checker.apiKey ? "" : " (no HaiMaker key; not checked)"}`,
     );
     console.log(`Output Format: ${args.outputFormat}`);
     console.log(`Verbose: ${args.verbose}`);
@@ -268,33 +271,47 @@ async function runWritingWorkflow(args: Args) {
 
     log(args, "factcheck", "Matching claims to source URLs");
     const hits = citableHits(research.hits);
-    const checker = resolveChecker(fastProvider.modelId, args.checkModel);
-    const checked = await checkClaims(
-      finalContent,
-      hits,
-      checker,
-      notes.text,
-      meter,
-    );
+    const slug = topicSlug(args.topic);
+    const path = `output/${slug}.md`;
+    const save = (body: string, findings: string) =>
+      Promise.all([
+        writeOutputFile(path, formatOutput(args, body)),
+        writeOutputFile(
+          `output/${slug}.notes.md`,
+          notesRecord({
+            notes: notes.text,
+            outlineModel: reasoningProvider.modelId ?? reasoningProvider.name,
+            draftModel: fastProvider.modelId ?? fastProvider.name,
+            cost: cost(),
+            factcheck: findings,
+          }),
+        ),
+      ]);
+    let checked: Awaited<ReturnType<typeof checkClaims>>;
+    try {
+      checked = await checkClaims(
+        finalContent,
+        hits,
+        checker,
+        notes.text,
+        meter,
+      );
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "fact-check failed";
+      const skipped = uncheckedResult(finalContent, message, checker.modelId);
+      await save(skipped.text, factcheckRecord(skipped));
+      console.log(`[factcheck] ${message}; saved unchecked`);
+      throw error;
+    }
     console.log(cost());
     console.log(`[factcheck] ${checked.detail}`);
 
     console.log(`Words: ${countWords(checked.text)}`);
 
     const formatted = formatOutput(args, checked.text);
-    const slug = topicSlug(args.topic);
-    const path = `output/${slug}.md`;
-    await writeOutputFile(path, formatted);
-    await writeOutputFile(
-      `output/${slug}.notes.md`,
-      notesRecord({
-        notes: notes.text,
-        outlineModel: reasoningProvider.modelId ?? reasoningProvider.name,
-        draftModel: fastProvider.modelId ?? fastProvider.name,
-        cost: cost(),
-        factcheck: factcheckRecord(checked),
-      }),
-    );
+    await save(checked.text, factcheckRecord(checked));
 
     return formatted;
   } catch (error) {

@@ -83,8 +83,24 @@ function listedCheckModel(id: string): boolean {
 }
 
 function envCheckModel(): string {
-  const fromEnv = Deno.env.get("CHECK_MODEL")?.trim() ?? "";
+  const fromEnv = rawCheckModel();
   return listedCheckModel(fromEnv) ? fromEnv : "";
+}
+
+function rawCheckModel(): string {
+  return Deno.env.get("CHECK_MODEL")?.trim() ?? "";
+}
+
+export function checkerReplacement(
+  asked: string,
+  used: string,
+  label = "checker",
+): string | undefined {
+  if (!asked || asked === used) return undefined;
+  if (!listedCheckModel(asked)) {
+    return `${label} ${asked} is not a HaiMaker model; using ${used}`;
+  }
+  return `${label} ${asked} matches the writer; using ${used}`;
 }
 
 export function checkModelId(writerModelId: string, requested?: string): string {
@@ -96,11 +112,39 @@ export function checkModelId(writerModelId: string, requested?: string): string 
     ?.id ?? "google/gemini-3.1-flash-lite";
 }
 
+export interface CheckerTarget extends ResolvedProvider {
+  note?: string;
+}
+
 export function resolveChecker(
   writerModelId: string,
   requested?: string,
-): ResolvedProvider {
-  return resolveProvider("haimaker", "fast", checkModelId(writerModelId, requested));
+): CheckerTarget {
+  const modelId = checkModelId(writerModelId, requested);
+  const asked = requested?.trim() || rawCheckModel();
+  const label = requested?.trim() ? "checker" : "CHECK_MODEL";
+  const note = asked ? checkerReplacement(asked, modelId, label) : undefined;
+  if (note) console.log(note);
+  return { ...resolveProvider("haimaker", "fast", modelId), note };
+}
+
+export function uncheckedResult(
+  text: string,
+  detail: string,
+  modelId?: string,
+): FactCheckResult {
+  const claims = splitClaims(text);
+  return {
+    text,
+    supported: 0,
+    unsupported: 0,
+    unchecked: claims.length,
+    unsupportedClaims: [],
+    uncheckedClaims: claims,
+    checked: false,
+    detail,
+    modelId,
+  };
 }
 
 export function factcheckRecord(result: FactCheckResult): string {
@@ -192,6 +236,9 @@ export async function checkClaims(
     checked: false,
     modelId: model.modelId,
   };
+  if (!model.apiKey) {
+    return uncheckedResult(text, "no HaiMaker key; not checked", model.modelId);
+  }
   if (hits.length === 0) {
     return { ...skipped, detail: "no sources to check" };
   }

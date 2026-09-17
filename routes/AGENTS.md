@@ -17,7 +17,7 @@ Fresh screens for the writing test: topic, style, provider, writer model, checke
 - Providers are the keys of `PROVIDERS`. Picker ids stay in each provider's `models`. HaiMaker labels, prices, and the reasoning flag come from the model hub when that fetch succeeds
 - If the HaiMaker key's model list shares no picker id, the picker is empty and the form shows a warning. Do not show the curated list in that case
 - A model not in the chosen provider's `models` is HTTP 400 JSON `{ error }`
-- `checkModel` must be a HaiMaker picker id. The route passes it to `writeStages`. The checker still uses `HAIMAKER_API_KEY` when the writer is Mercury
+- `checkModel` must be a HaiMaker picker id. The route passes it to `writeStages`. The checker uses `HAIMAKER_API_KEY` even when the writer is Mercury. Without that key, fact-check is skipped and the essay is still saved. A checker auth or rate-limit error yields the essay, then a fact-check error
 - A missing topic or unknown style is HTTP 400 JSON `{ error }`
 - A write streams `text/event-stream`: stage events, then `{ type: "essay", markdown }`, or `{ type: "error" }`
 
