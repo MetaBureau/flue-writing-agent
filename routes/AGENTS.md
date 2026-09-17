@@ -18,7 +18,7 @@ Fresh screens for the writing test: prompt interview, topic, length, style, thre
 - The page does not load the model hub. Writer radios are `WRITER_OPTIONS`. The form posts that option's provider and model, and does not post `checkModel`
 - A model not in the chosen provider's `models` is HTTP 400 JSON `{ error }`
 - Optional `checkModel` must be a HaiMaker picker id. The form does not send one, so the critic uses the writer. Without a writer key the run fails
-- The stream yields `{ type: "error" }` if the essay body is outside 85%–115% of the request. Leftover harness problems after two revise passes save as a critic warning
+- The stream yields `{ type: "error" }` if the essay body is outside 85%–115% of the request. Leftover Layer 1 problems after two revise passes block the save
 - A write streams `text/event-stream`: stage events, `{ type: "piece", piece }`
   for notes, plan, draft, critic, and the essay, then
   `{ type: "essay", markdown, filename }`, or `{ type: "error" }`

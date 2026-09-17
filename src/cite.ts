@@ -1,3 +1,8 @@
+import { bodyWordCount, isCallToAction } from "./agents/write.ts";
+import {
+  essayLengthCeiling,
+  essayLengthFloor,
+} from "./contract.ts";
 import type { Article, SourceNote } from "./notes.ts";
 
 export const COPY_NGRAM = 8;
@@ -59,7 +64,7 @@ function sentencesOf(text: string): string[] {
 
 export function quotedSpans(essay: string): string[] {
   const spans: string[] = [];
-  const pattern = /"([^"]+)"|\u201c([^\u201d]+)\u201d|'([^']+)'/g;
+  const pattern = /"([^"]+)"|\u201c([^\u201d]+)\u201d|\u2018([^\u2019]+)\u2019/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(essay))) {
     const span = match[1] ?? match[2] ?? match[3] ?? "";
@@ -105,19 +110,28 @@ function notesBlob(notes: readonly SourceNote[]): string {
   ).join(" ");
 }
 
+function isYearFigure(figure: string): boolean {
+  return /^(?:19|20)\d{2}$/.test(figure);
+}
+
+function textHasYear(text: string, year: string): boolean {
+  return new RegExp(`\\b${year}\\b`).test(text);
+}
+
 export function figureNeedsCite(
   figure: string,
   notes: readonly SourceNote[],
+  brief = "",
 ): boolean {
-  if (/^(?:19|20)\d{2}$/.test(figure)) {
-    return notesBlob(notes).includes(figure);
-  }
-  return true;
+  if (!isYearFigure(figure)) return true;
+  if (textHasYear(brief, figure)) return false;
+  return notesBlob(notes).includes(figure);
 }
 
 export function citationProblems(
   essay: string,
   notes: readonly SourceNote[],
+  brief = "",
 ): string[] {
   if (notes.length === 0) return [];
   const known = new Set(notes.map((note) => note.id));
@@ -138,7 +152,7 @@ export function citationProblems(
     }
     const figures = sentence.match(FIGURE) ?? [];
     for (const figure of figures) {
-      if (!hasCitation(sentence) && figureNeedsCite(figure, notes)) {
+      if (!hasCitation(sentence) && figureNeedsCite(figure, notes, brief)) {
         problems.push(`figure ${figure} has no citation`);
       }
     }
@@ -176,7 +190,7 @@ export function copyProblems(
 }
 
 function stripQuotedSpans(text: string): string {
-  return text.replace(/"([^"]*)"|\u201c([^\u201d]*)\u201d|'([^']*)'/g, " ");
+  return text.replace(/"([^"]*)"|\u201c([^\u201d]*)\u201d|\u2018([^\u2019]*)\u2019/g, " ");
 }
 
 export function copiedGramFromProblem(problem: string): string | undefined {
@@ -263,10 +277,104 @@ export function groundingProblems(
   essay: string,
   notes: readonly SourceNote[],
   articles: readonly Article[] = [],
+  brief = "",
 ): string[] {
   return [
-    ...citationProblems(essay, notes),
+    ...citationProblems(essay, notes, brief),
     ...copyProblems(essay, articles),
     ...quoteProblems(essay),
   ];
+}
+
+export const LAYER1_IDS = [
+  "cite",
+  "ids",
+  "copy",
+  "quotes",
+  "length",
+  "sources",
+  "body",
+] as const;
+
+export type Layer1Id = (typeof LAYER1_IDS)[number];
+
+export type Layer1Score = Record<Layer1Id, boolean>;
+
+function sourcesListed(essay: string): string[] {
+  const block = essay.match(/\n## Sources\s*\n([\s\S]*)$/)?.[1] ?? "";
+  const ids = block.match(/\[n\d+\]/g) ?? [];
+  return [...new Set(ids.map((id) => id.slice(1, -1)))];
+}
+
+export function sourcesProblems(
+  essay: string,
+  _notes: readonly SourceNote[],
+): string[] {
+  const cited = citedNoteIds(essay);
+  const listed = sourcesListed(essay);
+  if (cited.length === listed.length && cited.every((id) => listed.includes(id))) {
+    return [];
+  }
+  return ["Sources list does not match cited notes"];
+}
+
+export function bodyLinkProblems(essay: string): string[] {
+  const body = essay
+    .replace(/\n## Sources\s*\n[\s\S]*$/, "")
+    .replace(/^\uFEFF?\s*# [^\n]*\n*/, "")
+    .replace(/^\d+ words\.?\n+/i, "");
+  const problems: string[] = [];
+  if (/https?:\/\/|www\./i.test(body)) {
+    problems.push("source URL in the body");
+  }
+  if (/\[[^\]]+\]\([^)]+\)/.test(body)) {
+    problems.push("markdown link in the body");
+  }
+  for (const sentence of sentencesOf(body)) {
+    if (isCallToAction(sentence)) {
+      problems.push(`call to action in the body: ${sentence.slice(0, 80)}`);
+    }
+  }
+  return [...new Set(problems)];
+}
+
+export function layer1Score(
+  essay: string,
+  notes: readonly SourceNote[],
+  articles: readonly Article[],
+  target: number,
+  brief = "",
+): Layer1Score {
+  const citations = citationProblems(essay, notes, brief);
+  const words = bodyWordCount(essay);
+  return {
+    cite: citations.every((item) => item.startsWith("citation [")),
+    ids: citations.every((item) => !item.startsWith("citation [")),
+    copy: copyProblems(essay, articles).length === 0,
+    quotes: quoteProblems(essay).length === 0,
+    length: words >= essayLengthFloor(target) &&
+      words <= essayLengthCeiling(target),
+    sources: sourcesProblems(essay, notes).length === 0,
+    body: bodyLinkProblems(essay).length === 0,
+  };
+}
+
+export function layer1Problems(
+  essay: string,
+  notes: readonly SourceNote[],
+  articles: readonly Article[],
+  target: number,
+  brief = "",
+): string[] {
+  const score = layer1Score(essay, notes, articles, target, brief);
+  const labels: Record<Layer1Id, string> = {
+    cite: "uncited figure, quote, or attributed claim",
+    ids: "citation does not match a note",
+    copy: "unquoted 8-word copy from a source",
+    quotes: "quoted words over 15% of the body",
+    length: "body length outside 85–115% of the target",
+    sources: "Sources list does not match cited notes",
+    body: "URL, markdown link, or call to action in the body",
+  };
+  return LAYER1_IDS.filter((id) => !score[id]).map((id) => labels[id]);
 }

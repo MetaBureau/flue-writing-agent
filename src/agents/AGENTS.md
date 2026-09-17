@@ -21,10 +21,12 @@ It streams `src/workflow.ts`.
 ## Local Contracts
 
 - `wordCountFromTopic` defaults to 900 unless the topic contains `N words`. A form `words` argument sets the plan target and wins over that topic count
-- Plan JSON: `{title, sections: [{heading, purpose, noteIds}], counters, gaps}`.
+- Plan JSON: `{title, claim, sections: [{heading, purpose, noteIds}], counters, gaps}`.
   `sectionLimit` caps sections by length. Headings do not start with
-  Introduction or Conclusion. Notes keep attribution. Do not invent a
-  statistic, a study, a quote, or a source
+  Introduction or Conclusion. If the brief has no claim, `claim` is the one
+  the notes can support. Notes keep attribution. Do not invent a statistic, a
+  study, a quote, or a source. Encyclopaedia and live-blog notes cannot be a
+  section's only support
 - Draft writes one essay from the plan. Paraphrase; quoted words stay under
   15% of the body. Cite `[n3]` after figures, quotes, and attributed claims.
   Name the outlet or author the first time. Do not weave unused notes. Essays

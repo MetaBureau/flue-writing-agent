@@ -44,7 +44,7 @@ export const BRIEF_RESPONSE_FORMAT = {
 };
 
 export function fallbackBrief(topic: string): Brief {
-  return {
+  return applyBriefDefaults({
     text: topic,
     subject: searchQuery(topic),
     claim: "",
@@ -52,7 +52,16 @@ export function fallbackBrief(topic: string): Brief {
     purpose: "",
     tone: "",
     constraints: [],
-  };
+  });
+}
+
+export function applyBriefDefaults(brief: Brief, claim = brief.claim): Brief {
+  const nextClaim = claim.trim();
+  const purpose = brief.purpose.trim() ||
+    (nextClaim
+      ? `persuading ${brief.audience.trim() || "the reader"} of the claim`
+      : "");
+  return { ...brief, claim: nextClaim, purpose };
 }
 
 function stringField(row: Record<string, unknown>, key: string): string | undefined {
@@ -80,7 +89,7 @@ export function briefFromContent(content: string, topic: string): Brief | undefi
     ) {
       return undefined;
     }
-    return {
+    return applyBriefDefaults({
       text: topic,
       subject: subject.trim() || searchQuery(topic),
       claim: claim.trim(),
@@ -88,7 +97,7 @@ export function briefFromContent(content: string, topic: string): Brief | undefi
       purpose: purpose.trim(),
       tone: tone.trim(),
       constraints: constraints.map((item) => item.trim()).filter(Boolean),
-    };
+    });
   } catch {
     return undefined;
   }

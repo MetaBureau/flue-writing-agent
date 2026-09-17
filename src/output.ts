@@ -10,7 +10,9 @@ export async function writeOutputFile(
   path: string,
   body: string,
 ): Promise<void> {
-  await Deno.mkdir("output", { recursive: true });
+  const slash = path.lastIndexOf("/");
+  const dir = slash > 0 ? path.slice(0, slash) : ".";
+  await Deno.mkdir(dir, { recursive: true });
   const tempPath = `${path}.tmp`;
   await Deno.writeTextFile(tempPath, body);
   await Deno.rename(tempPath, path);

@@ -10,6 +10,16 @@ export const MAX_SEARCH_RESULTS = 20;
 export const EXTRACT_LIMIT = 8;
 export const MIN_ARTICLE_CHARS = 400;
 
+export function noteFloor(words: number): number {
+  if (words <= 1000) return 6;
+  if (words <= 2000) return 8;
+  return 10;
+}
+
+export function extractLimitFor(words: number): number {
+  return Math.max(EXTRACT_LIMIT, noteFloor(words));
+}
+
 const MILL_DOMAINS = [
   "bartleby.com",
   "brainly.com",
@@ -162,7 +172,7 @@ export function researchBudget(words: number): ResearchBudget {
   const target = Math.max(words, 500);
   const sources = Math.min(
     MAX_RESEARCH_SOURCES,
-    Math.max(8, Math.ceil(target / 100)),
+    Math.max(8, noteFloor(target), Math.ceil(target / 100)),
   );
   const excerptWords = Math.min(
     MAX_EXCERPT_WORDS,
@@ -304,6 +314,23 @@ export function quoteInArticle(quote: string, text: string): boolean {
 
 function normalizeForMatch(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+export function isEncyclopaediaOrLiveBlog(url: string, title = ""): boolean {
+  const host = hostOf(url);
+  if (
+    host === "wikipedia.org" || host.endsWith(".wikipedia.org") ||
+    host === "britannica.com" || host.endsWith(".britannica.com")
+  ) {
+    return true;
+  }
+  if (/encyclop(?:a|e)edia/i.test(host) || /encyclop(?:a|e)edia/i.test(title)) {
+    return true;
+  }
+  if (/live\s*blog/i.test(title) || /\/live(?:-blog)?(?:\/|$|\?)/i.test(url)) {
+    return true;
+  }
+  return false;
 }
 
 export function isBlockedSource(url: string): boolean {
@@ -583,10 +610,11 @@ async function searchHits(
 
 export async function extractArticles(
   hits: SearchHit[],
+  limit = EXTRACT_LIMIT,
 ): Promise<Article[]> {
   const selected = hits.filter((hit) => !isBlockedSource(hit.url)).slice(
     0,
-    EXTRACT_LIMIT,
+    limit,
   );
   if (selected.length === 0) return [];
   const payload = await tavilyPost(TAVILY_EXTRACT_URL, {
@@ -652,13 +680,14 @@ export async function gatherResearch(
     const opposing = counter
       ? await searchHits(counter, budget).catch(() => [] as SearchHit[])
       : [];
+    const limit = extractLimitFor(words);
     const hits = selectHits(
       `${query} ${counter}`.trim(),
       mergeHits(primary, opposing),
-      EXTRACT_LIMIT,
+      limit,
     );
     let articles = hits.length > 0
-      ? await extractArticles(hits).catch((error) => {
+      ? await extractArticles(hits, limit).catch((error) => {
         const message = error instanceof Error ? error.message : "request failed";
         console.log(`Extract: failed (${message}); using search snippets`);
         return articlesFromHits(hits);
@@ -673,4 +702,53 @@ export async function gatherResearch(
     console.log(`Research: none (${message})`);
     return emptyResearch(query, counter);
   }
+}
+
+export async function supplementResearch(
+  current: ResearchNotes,
+  queries: readonly string[],
+  words = DEFAULT_ESSAY_LENGTH,
+): Promise<ResearchNotes> {
+  const budget = researchBudget(words);
+  const limit = extractLimitFor(words);
+  let hits = current.hits;
+  for (const query of queries.map((item) => item.trim()).filter(Boolean).slice(0, 3)) {
+    const extra = await searchHits(query, budget).catch(() => [] as SearchHit[]);
+    hits = mergeHits(hits, extra);
+  }
+  hits = selectHits(
+    [current.query, current.counterQuery, ...queries].join(" ").trim(),
+    hits,
+    limit,
+  );
+  const known = new Set(current.articles.map((article) => canonicalUrl(article.url)));
+  const fresh = hits.filter((hit) => !known.has(canonicalUrl(hit.url)));
+  const extracted = fresh.length > 0
+    ? await extractArticles(fresh, limit).catch((error) => {
+      const message = error instanceof Error ? error.message : "request failed";
+      console.log(`Extract: failed (${message}); using search snippets`);
+      return articlesFromHits(fresh);
+    })
+    : [];
+  return researchFromArticles(
+    current.query,
+    current.counterQuery,
+    hits,
+    mergeArticles(current.articles, extracted),
+  );
+}
+
+export function mergeNotes(
+  base: readonly SourceNote[],
+  extra: readonly SourceNote[],
+): SourceNote[] {
+  const urls = new Set(base.map((note) => canonicalUrl(note.url)));
+  const next = [...base];
+  for (const note of extra) {
+    const key = canonicalUrl(note.url);
+    if (urls.has(key)) continue;
+    urls.add(key);
+    next.push({ ...note, id: `n${next.length + 1}` });
+  }
+  return next;
 }

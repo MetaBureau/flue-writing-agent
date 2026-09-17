@@ -17,21 +17,23 @@ import {
   essayReadyToSave,
   expandUserPrompt,
   formatPlan,
-  sectionLimit,
-  shortenUserPrompt,
   isCallToAction,
   notesRecord,
   notesUserPrompt,
   planFromContent,
   planUserPrompt,
   publishedTitle,
+  sectionLimit,
+  shortenUserPrompt,
   stageSystem,
   stripBodyLinks,
   stripLeadingTitle,
+  supportSections,
   systemMessage,
   wordCountFromTopic,
 } from "../src/agents/write.ts";
 import {
+  applyBriefDefaults,
   briefFromContent,
   counterQuery,
   parseBrief,
@@ -93,7 +95,9 @@ import {
   formatAttributedNotes,
   hitsFromPayload,
   isBlockedSource,
+  isEncyclopaediaOrLiveBlog,
   mergeHits,
+  noteFloor,
   outletMatchesDomain,
   relevantToQuery,
   researchBudget,
@@ -330,7 +334,8 @@ Deno.test("stage prompts carry the frog brief and attributed notes", () => {
   assertStringIncludes(planUserPrompt(FROG_BRIEF, 500), "at most 3 sections");
   assertEquals(sectionLimit(500), 3);
   assertEquals(sectionLimit(2000), 5);
-  assertStringIncludes(criticUserPrompt(FROG_BRIEF, "essay"), "15%");
+  assertStringIncludes(criticUserPrompt(FROG_BRIEF, "essay"), "Silence about process");
+  assertStringIncludes(criticUserPrompt(FROG_BRIEF, "essay"), "Claim.");
   assertFalse(draftUserPrompt(plan, FROG_BRIEF).includes("Weave unused notes"));
   assertFalse(criticUserPrompt(FROG_BRIEF, "essay").includes("actual wit"));
   assertStringIncludes(
@@ -631,6 +636,20 @@ Deno.test("citation harness rejects a figure or quote without a note id", () => 
     citationProblems("The 1999 debate still matters.", [LOWY]),
     [],
   );
+  assertEquals(
+    citationProblems(
+      "Politics in Australia in 2026 is run by elites, not by voters.",
+      [{
+        ...LOWY,
+        claims: [{
+          claim: "As of 2026 elites still set the agenda.",
+          quote: "Elites still set the agenda in 2026.",
+        }],
+      }],
+      "Elites and politics in Australia in 2026.",
+    ),
+    [],
+  );
 });
 
 Deno.test("copy harness requires quotation marks for a long shared phrase", () => {
@@ -676,6 +695,10 @@ Deno.test("quote budget flags a literature-review draft", () => {
   const paraphrased =
     `Frogs suit a small flat [n2]. Fire-bellied toads can share a five-gallon tank [n1]. White's tree frog is calm enough for a beginner [n2].`;
   assertEquals(quoteProblems(paraphrased), []);
+  assertEquals(
+    quoteProblems("It's Australia's market and it doesn't wait for buyers."),
+    [],
+  );
 });
 
 Deno.test("sources list is built from cited note ids", () => {
@@ -687,17 +710,20 @@ Deno.test("sources list is built from cited note ids", () => {
 
 Deno.test("critic JSON lists passage-level issues and the brief is the rulebook", () => {
   const review = criticFromContent(JSON.stringify({
-    issues: [{
-      passage: "A 2006 survey",
-      problem: "The date is treated as current",
-      fix: "Say the survey is from 2006",
+    items: [{
+      id: "claim",
+      pass: false,
+      passage: "The notes do not settle this.",
+      fix: "State the claim in the opening.",
     }],
   }));
-  assertEquals(review.issues[0]?.problem, "The date is treated as current");
+  assertEquals(review.issues[0]?.passage, "The notes do not settle this.");
+  assertEquals(review.rubric.find((item) => item.id === "silence")?.pass, false);
   const prompt = criticUserPrompt(FROG_BRIEF, "essay", [
     "figure 2006 has no citation",
   ]);
   assertStringIncludes(prompt, "figure 2006");
+  assertStringIncludes(prompt, "Silence about process");
   assertFalse(prompt.includes("A pass needs actual wit"));
   const merged = mergeIssues(
     [{ passage: "a", problem: "x", fix: "y" }],
@@ -710,6 +736,7 @@ Deno.test("plan JSON maps sections to note ids and names gaps", () => {
   const plan = planFromContent(
     JSON.stringify({
       title: "Who runs Australia",
+      claim: "Politics is run by elites.",
       sections: [{
         heading: "Donations",
         purpose: "Show money",
@@ -722,6 +749,7 @@ Deno.test("plan JSON maps sections to note ids and names gaps", () => {
     "elites",
   );
   assertEquals(plan.title, "Who runs Australia");
+  assertEquals(plan.claim, "Politics is run by elites.");
   assertEquals(plan.sections[0].noteIds, ["n2"]);
   assertEquals(plan.gaps.includes("lobbying"), true);
   assertStringIncludes(formatPlan(plan), "[n2]");
@@ -855,4 +883,49 @@ Deno.test("system message still splits the Anthropic cache prefix", () => {
     true,
   );
   assertEquals(groundingProblems("No figures here.", [], []).length, 0);
+});
+
+Deno.test("a brief without a purpose defaults to persuading the audience of the claim", () => {
+  const brief = applyBriefDefaults({
+    text: "Housing in 2026.",
+    subject: "housing",
+    claim: "rents outpace wages",
+    audience: "a general reader",
+    purpose: "",
+    tone: "",
+    constraints: [],
+  });
+  assertStringIncludes(brief.purpose, "persuading");
+  assertStringIncludes(brief.purpose, "a general reader");
+  assertStringIncludes(
+    planUserPrompt({ ...brief, claim: "" }, 1200),
+    "The brief states no claim",
+  );
+});
+
+Deno.test("research floor and encyclopaedia notes", () => {
+  assertEquals(noteFloor(500), 6);
+  assertEquals(noteFloor(1000), 6);
+  assertEquals(noteFloor(2000), 8);
+  assertEquals(noteFloor(2500), 10);
+  assertEquals(
+    isEncyclopaediaOrLiveBlog("https://en.wikipedia.org/wiki/Frog", "Frog"),
+    true,
+  );
+  assertEquals(
+    isEncyclopaediaOrLiveBlog("https://www.theguardian.com/live/politics", "Live"),
+    true,
+  );
+  const wiki = {
+    ...LOWY,
+    id: "n1",
+    url: "https://en.wikipedia.org/wiki/Elite",
+    title: "Elite",
+  };
+  const paper = { ...LOWY, id: "n2", url: "https://www.lowyinstitute.org/elites" };
+  const sections = supportSections(
+    [{ heading: "Who governs", purpose: "Show power", noteIds: ["n1"] }],
+    [wiki, paper],
+  );
+  assertEquals(sections[0].noteIds.includes("n2"), true);
 });

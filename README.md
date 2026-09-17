@@ -108,8 +108,10 @@ src/
 3. **Notes**: One model turn turns each article into structured notes with attribution
 4. **Plan**: Map each section to note ids, at most three sections for a 500-word essay. Name counter-arguments and gaps. Do not label Introduction or Conclusion
 5. **Draft**: Write one essay from the plan, paraphrasing, citing `[n3]`. Quoted words stay under 15% of the body. If it is short, one expand pass fills thin sections from notes already in the plan. If it is long, one shorten pass cuts filler
-6. **Critic**: One model sees the brief, the notes, and the draft. The harness rejects uncited figures and quotes, missing note ids, unquoted copying, and a quote share over 15%. Critic issues and harness findings merge. Two revise passes. Leftover copied phrases are quoted in place only under the quote budget. Leftover harness problems save as a warning
+6. **Critic**: One model judges the RFC 0003 rubric. The harness rejects uncited figures and quotes, missing note ids, unquoted copying, and a quote share over 15%. Critic issues and harness findings merge. Two revise passes. Leftover copied phrases are quoted in place only under the quote budget. The sidecar records remaining issues. Leftover Layer 1 problems block the save
 7. **Save**: Print the essay and write `output/<slug>.md` plus `output/<slug>.notes.md`. Strip links, URLs, and calls to action from the body. `## Sources` lists cited notes. No `## Style:` line in the essay
+
+`deno task eval` runs the four RFC 0003 briefs and prints the pass/fail table. Essays land in `evals/out/`.
 
 ## Security
 

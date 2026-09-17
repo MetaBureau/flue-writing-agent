@@ -17,6 +17,7 @@ import {
   canonicalUrl,
   formatArticles,
   formatAttributedNotes,
+  isEncyclopaediaOrLiveBlog,
   quoteInArticle,
   relevantToQuery,
   resolvedOutlet,
@@ -39,6 +40,7 @@ export type EditorialStyle =
 
 export interface EssayPlan {
   title: string;
+  claim: string;
   wordCountTarget: number;
   sections: PlanSection[];
   counters: string[];
@@ -337,15 +339,33 @@ export function cleanSectionHeading(heading: string): string {
     .trim();
 }
 
+export function supportSections(
+  sections: PlanSection[],
+  notes: readonly SourceNote[],
+): PlanSection[] {
+  const strongIds = notes
+    .filter((note) => !isEncyclopaediaOrLiveBlog(note.url, note.title))
+    .map((note) => note.id);
+  return sections.map((section) => {
+    if (section.noteIds.length === 0) return section;
+    if (section.noteIds.some((id) => strongIds.includes(id))) return section;
+    const extra = strongIds.find((id) => !section.noteIds.includes(id));
+    if (!extra) return section;
+    return { ...section, noteIds: [...section.noteIds, extra] };
+  });
+}
+
 export function planFromContent(
   content: string,
   target: number,
   topic: string,
+  notes: readonly SourceNote[] = [],
 ): EssayPlan {
   const row = jsonObject(content);
   const title = typeof row?.title === "string" && row.title.trim()
     ? row.title.trim()
     : topic.split(" ").slice(0, 6).join(" ");
+  const claim = typeof row?.claim === "string" ? row.claim.trim() : "";
   const cap = sectionLimit(target);
   const sections: PlanSection[] = [];
   if (Array.isArray(row?.sections)) {
@@ -368,10 +388,14 @@ export function planFromContent(
   }
   return {
     title,
+    claim,
     wordCountTarget: target,
-    sections: sections.length > 0
-      ? sections
-      : [{ heading: title, purpose: "Argue the brief", noteIds: [] }],
+    sections: supportSections(
+      sections.length > 0
+        ? sections
+        : [{ heading: title, purpose: "Argue the claim", noteIds: [] }],
+      notes,
+    ),
     counters: stringList(row?.counters),
     gaps: stringList(row?.gaps),
   };
@@ -392,7 +416,8 @@ export function formatPlan(plan: EssayPlan): string {
   const gaps = plan.gaps.length > 0
     ? plan.gaps.map((item) => `- ${item}`).join("\n")
     : "- none named";
-  return `# ${plan.title}\n\nSections:\n${sections}\n\nCounter-arguments:\n${counters}\n\nGaps:\n${gaps}\n`;
+  const claim = plan.claim ? `Claim: ${plan.claim}\n\n` : "";
+  return `# ${plan.title}\n\n${claim}Sections:\n${sections}\n\nCounter-arguments:\n${counters}\n\nGaps:\n${gaps}\n`;
 }
 
 export const NOTES_SYSTEM =
@@ -455,14 +480,14 @@ export function notesUserPrompt(articles: readonly Article[]): string {
   return [
     "For each article, return a note with id n1, n2, ... in article order.",
     "Keep the URL. Name the author when the page does. Set outlet to the publication that owns this URL's domain. Keep the date. State the source's overall stance in one sentence.",
-    "List checkable claims. Each claim needs an exact quote from that article. Drop navigation, sidebars, and unrelated headlines.",
+    "List at most four checkable claims. Each claim needs an exact quote from that article. Drop navigation, sidebars, and unrelated headlines.",
     "Return JSON {notes: [{id, url, title, author, outlet, date, stance, claims: [{claim, quote}]}]}",
     formatArticles(articles),
   ].join("\n\n");
 }
 
 export const PLAN_SYSTEM =
-  "Plan one essay from the attributed notes. Map each section to note ids. Name counter-arguments the notes support. Name gaps the notes do not cover. Do not invent sources to fill a gap. Do not label a section Introduction or Conclusion.";
+  "Plan one essay from the attributed notes. The essay argues one claim. If the brief has none, propose one the notes can support. Map each section to note ids. Name counter-arguments the notes support. Name gaps the notes do not cover. Do not invent sources to fill a gap. Do not write a neutral survey. Do not plan a section that lists gaps, discusses the notes, or talks about the research. Gaps stay in gaps. Do not label a section Introduction or Conclusion.";
 
 export const PLAN_RESPONSE_FORMAT = {
   type: "json_schema",
@@ -472,9 +497,10 @@ export const PLAN_RESPONSE_FORMAT = {
     schema: {
       type: "object",
       additionalProperties: false,
-      required: ["title", "sections", "counters", "gaps"],
+      required: ["title", "claim", "sections", "counters", "gaps"],
       properties: {
         title: { type: "string" },
+        claim: { type: "string" },
         sections: {
           type: "array",
           items: {
@@ -496,17 +522,21 @@ export const PLAN_RESPONSE_FORMAT = {
 };
 
 export function planUserPrompt(brief: Brief, target: number): string {
+  const claimLine = brief.claim
+    ? `Argue this claim: ${brief.claim}`
+    : "The brief states no claim. Propose one arguable claim the notes can support. Put it in claim. An essay with no claim is a fail, not a survey.";
   return [
     briefBlock(brief),
     BRIEF_ASK,
     `Plan a ${target}-word essay in at most ${sectionLimit(target)} sections.`,
-    "Each section lists the note ids it will use. Plan how to handle opposing notes. Name gaps the notes do not cover. Do not invent a source for a gap. Do not name a section Introduction or Conclusion.",
-    "Return JSON {title, sections: [{heading, purpose, noteIds}], counters, gaps}.",
+    claimLine,
+    "Each section lists the note ids it will use. Plan how to handle opposing notes. Name gaps the notes do not cover. Do not invent a source for a gap. Do not plan a section about gaps or the notes. Do not name a section Introduction or Conclusion.",
+    "Return JSON {title, claim, sections: [{heading, purpose, noteIds}], counters, gaps}.",
   ].join("\n\n");
 }
 
 export const DRAFT_SYSTEM =
-  `Write one essay from the plan and the attributed notes. ${NOTES_GROUNDING} Paraphrase. Quoted words must stay under 15% of the body. Quote only a phrase that would lose force if rewritten. Cite a note id in square brackets after every figure, quote, or attributed claim, like [n3]. Name the outlet or author the first time you use a source, then cite without repeating that name every sentence. A copied phrase from a source must be in quotation marks and cited. Do not weave unused notes. Do not paste a URL or a call to action.`;
+  `Write one essay from the plan and the attributed notes. ${NOTES_GROUNDING} Paraphrase. Quoted words must stay under 15% of the body. Quote only a phrase that would lose force if rewritten. Cite a note id in square brackets after every figure, quote, or attributed claim, like [n3]. Name the outlet or author the first time you use a source, then cite without repeating that name every sentence. A copied phrase from a source must be in quotation marks and cited. Do not weave unused notes. Do not paste a URL or a call to action. Do not write about the notes, the sources as a set, the research, or the essay itself. The close answers the claim; do not retreat into what the evidence cannot settle.`;
 
 export function draftUserPrompt(
   plan: EssayPlan,
@@ -534,6 +564,7 @@ export function draftUserPrompt(
     BRIEF_ASK,
     style ? styleSystemPrompt(style) : "",
     `Title: ${plan.title}`,
+    plan.claim ? `Claim: ${plan.claim}. State it in the opening.` : "",
     `Sections, in this order:\n${sections}`,
     `Counter-arguments to handle:\n${counters}`,
     gaps,
@@ -564,7 +595,7 @@ export function expandUserPrompt(
 
 const truncatedArticle = (article: Article): Article => ({
   ...article,
-  text: article.text.slice(0, 8000),
+  text: article.text.slice(0, 4000),
 });
 
 export function notesFromArticles(articles: readonly Article[]): SourceNote[] {
@@ -659,7 +690,7 @@ export async function planEssay(
 ): Promise<EssayPlan> {
   const topic = brief.subject || brief.text;
   if (!model.apiKey) {
-    return planFromContent("", target, topic);
+    return planFromContent("", target, topic, notes);
   }
   try {
     const content = (await streamChat(model, [
@@ -673,9 +704,11 @@ export async function planEssay(
       supportedParams,
       responseFormat: PLAN_RESPONSE_FORMAT,
     })).content;
-    return planFromContent(content, target, topic);
+    return planFromContent(content, target, topic, notes);
   } catch (error) {
-    if (error instanceof CutOffReply) return planFromContent("", target, topic);
+    if (error instanceof CutOffReply) {
+      return planFromContent("", target, topic, notes);
+    }
     throw error;
   }
 }

@@ -10,12 +10,14 @@ notes, run plan → draft → critic, write `output/<slug>.md`.
 - `workflow.ts` — stage events for the form. Brief, research, plan, draft,
   critic, then piece events for notes, plan, draft, critic, and the essay
 - `brief.ts` — parse the topic into a `Brief`. The brief is the rulebook
-- `cite.ts` — citation, copy, and quote-budget harness. Rejects an uncited
+- `cite.ts` — citation, copy, quote-budget, and Layer 1 harness. Rejects an uncited
   figure or quote, a citation to a missing note, an unquoted 8-word phrase
-  with three distinctive words, and quoted words over 15% of the body. Years
-  need a cite only when they appear in the notes
-- `critic.ts` — one review that sees the brief, the notes, and the cited draft,
-  then passage-level fixes
+  with three distinctive words, quoted words over 15% of the body, a Sources
+  list that does not match cited ids, and a URL, markdown link, or call to
+  action in the body. A year in the brief, or used as the essay's timeframe,
+  is not a figure
+- `critic.ts` — one review against the eight RFC 0003 rubric items; passage-level
+  fixes; sidecar records only remaining issues after revise
 - `output.ts` — topic slug and atomic `output/` writes
 - `providers.ts` — HaiMaker and Mercury registry, curated `models` ids, the
   form's three `WRITER_OPTIONS`, and env resolution
@@ -56,7 +58,7 @@ and style catalogs.
   content. A cut-off plan falls back to a title stub. A cut-off notes turn
   falls back to article excerpts. A cut-off draft fails the run. Expand,
   shorten, critic, and revise keep the current essay on cut-off. Critic
-  `max_completion_tokens` is 8192 so a passage list is less likely to cut off
+  `max_completion_tokens` is 2048 so the rubric JSON stays short
 - Do not send `reasoning_effort` unless the catalog lists it and the value is
   `low`, `medium`, or `high`. Omit it by default
 - Picker labels say "can reason" when the catalog sets `supports_reasoning`. Do
@@ -64,10 +66,13 @@ and style catalogs.
 - Research searches `researchQuery(brief)` plus `counterQuery(brief)`. Advanced
   search. No synthesized answer, no search `raw_content`. Deduplicate by
   canonical URL and title. Block mill domains, content farms, and Facebook,
-  Twitter, Reddit, Instagram, and TikTok. Extract the top 8 hits in full
-  (`TAVILY_EXTRACT_URL`). HTTP or network failure continues with the topic
+  Twitter, Reddit, Instagram, and TikTok. Extract `extractLimitFor(words)` hits
+  in full (`TAVILY_EXTRACT_URL`). HTTP or network failure continues with the topic
   only. Extract HTTP failure or empty extract uses search snippets so notes
-  are not blank after a hit
+  are not blank after a hit. Reach `noteFloor` before planning: 6 notes for
+  500–1000 words, 8 through 2000, 10 above. Below the floor, `supplementResearch`
+  re-queries, including the plan's gap list. Encyclopaedias and live blogs
+  count toward the floor but cannot be a section's only support
 - Structured notes keep id, URL, author, outlet, date, stance, and claims with
   quotes. The outlet is the publication that owns the URL's domain. A claimed
   outlet that does not match the host is replaced with the host brand. Claims
@@ -77,29 +82,33 @@ and style catalogs.
 - `parseBrief` runs first on the writer model. No key, a cut-off, or invalid
   JSON falls back to the verbatim topic and a `searchQuery` subject. That does
   not fail the run. `brief` is required on `systemMessage`. The interview does
-  not get it. The brief is the rulebook. Do not add a wit rule the brief did
-  not state
+  not get it. The brief is the rulebook. A missing purpose defaults to
+  persuading the stated audience of the claim. Only the brief may require
+  humour. Do not add a wit rule the brief did not state
 - Plan maps each section to note ids, names counter-arguments, and names gaps.
-  At most three sections at 500–700 words, four through 1500, five through
-  2500, six above that. Do not label a section Introduction or Conclusion.
-  Draft is one essay from that plan. Paraphrase; quoted words stay under 15%
-  of the body. Cite `[n3]` after a figure, quote, or attributed claim. Name
-  the outlet or author the first time, not in every sentence. Essays of 700
-  words or fewer are continuous prose. If the draft is under
-  `essayLengthFloor`, one expand pass fills thin sections from notes already in
-  the plan. If it is over `essayLengthCeiling`, one shorten pass cuts filler.
-  Length is fitted again after critic revise. It does not weave unused notes or
-  trim in code
+  If the brief has no claim, the plan proposes one the notes can support and
+  records it in the sidecar. At most three sections at 500–700 words, four
+  through 1500, five through 2500, six above that. Do not label a section
+  Introduction or Conclusion. Draft is one essay from that plan. Paraphrase;
+  quoted words stay under 15% of the body. Cite `[n3]` after a figure, quote,
+  or attributed claim. Name the outlet or author the first time, not in every
+  sentence. Essays of 700 words or fewer are continuous prose. If the draft is
+  under `essayLengthFloor`, one expand pass fills thin sections from notes
+  already in the plan. If it is over `essayLengthCeiling`, one shorten pass
+  cuts filler. Length is fitted again after critic revise. It does not weave
+  unused notes or trim in code
 - `cite.ts` rejects a figure or quote with no citation, a citation to a missing
   note, an 8-word phrase copied from an extracted article unless it is in
   quotation marks or has fewer than three distinctive words, and a quote share
-  over 15%. A four-digit year needs a cite only when the notes mention it. The
-  critic review and the harness merge; harness findings are not dropped when
-  the critic also returns issues. After two revise passes, leftover copied
-  phrases are quoted in place only if that stays under the quote budget.
-  Leftover harness problems save with a critic warning. Saving outside
-  85%–115% of the target fails. Save strips body links, URLs, and calls to
-  action. `## Sources` is built from cited note ids
+  over 15%. A year in the brief is not a figure. The critic judges the eight
+  RFC 0003 rubric items (claim, advance, objection, fidelity, voice, audience,
+  takeaway, silence). The critic review and the harness merge; harness findings
+  are not dropped when the critic also returns issues. After two revise
+  passes, leftover copied phrases are quoted in place only if that stays under
+  the quote budget. The sidecar records only remaining issues. Leftover Layer
+  1 problems block the save. Saving outside 85%–115% of the target fails.
+  Save strips body links, URLs, and calls to action. `## Sources` is built
+  from cited note ids
 - Style names still exist. They go into the draft prompt. There is no style
   rewrite pass
 - Dry run prints config and does not call models or Tavily beyond the
