@@ -1,9 +1,10 @@
 import {
   assertEssayLength,
   bodyWordCount,
+  capEssayLength,
   countWords,
   draftingNotes,
-  essayMarkdown,
+  essayReadyToSave,
   extendDraft,
   finishEssay,
   generateDrafts,
@@ -14,6 +15,14 @@ import {
   synthesizeEssay,
 } from "./agents/write.ts";
 import type { EditorialStyle } from "./agents/write.ts";
+import {
+  briefcheckSidecar,
+  briefSidecar,
+  briefStageDetail,
+  enforceBrief,
+  parseBrief,
+  researchQuery,
+} from "./brief.ts";
 import { loadModelHub, pricesFromCatalog } from "./catalog.ts";
 import {
   checkClaims,
@@ -25,6 +34,7 @@ import {
 import { formatRun, RunMeter } from "./complete.ts";
 import {
   DEFAULT_ESSAY_LENGTH,
+  briefcheckPiece,
   draftPiece,
   essayLengthFloor,
   essayPiece,
@@ -73,8 +83,24 @@ export async function* writeStages(input: {
   if (!checker.apiKey) console.log("no HaiMaker key; not checked");
 
   const slug = topicSlug(input.topic);
-  let stage: StageId = "research";
+  let stage: StageId = "brief";
   try {
+    yield { type: "stage", id: "brief", status: "active" };
+    const target = input.words ?? DEFAULT_ESSAY_LENGTH;
+    const brief = await parseBrief(
+      input.topic,
+      fast,
+      meter,
+      catalog.get(fast.modelId)?.supportedParams,
+    );
+    yield {
+      type: "stage",
+      id: "brief",
+      status: "done",
+      detail: `${briefStageDetail(brief)} · ${cost()}`,
+    };
+
+    stage = "research";
     yield {
       type: "stage",
       id: "research",
@@ -83,19 +109,21 @@ export async function* writeStages(input: {
         ? "Searching notes"
         : "Searching notes · no HaiMaker key; not checked",
     };
-    const target = input.words ?? DEFAULT_ESSAY_LENGTH;
-    let research = await gatherResearch(input.topic, target);
+    let research = await gatherResearch(researchQuery(brief), target);
     let notes = {
       text: draftingNotes(
         [input.topic, research.text].filter(Boolean).join("\n\n"),
       ),
       topic: input.topic,
+      brief,
     };
     yield {
       type: "stage",
       id: "research",
       status: "done",
-      detail: research.count > 0 ? `${research.count} sources` : "Topic only",
+      detail: research.count > 0
+        ? `${research.count} sources · ${research.query}`
+        : `Topic only · ${research.query || "no query"}`,
     };
     yield { type: "piece", piece: notesPiece(slug, `${notes.text.trim()}\n`) };
 
@@ -124,6 +152,7 @@ export async function* writeStages(input: {
         [input.topic, research.text].filter(Boolean).join("\n\n"),
       ),
       topic: input.topic,
+      brief,
     };
     yield { type: "piece", piece: notesPiece(slug, `${notes.text.trim()}\n`) };
     yield {
@@ -210,7 +239,7 @@ export async function* writeStages(input: {
       fast,
       "extend",
       meter,
-      input.topic,
+      brief,
     );
     if (countWords(extended) < essayLengthFloor(outline.wordCountTarget)) {
       research = await supplementResearch(
@@ -223,6 +252,7 @@ export async function* writeStages(input: {
           [input.topic, research.text].filter(Boolean).join("\n\n"),
         ),
         topic: input.topic,
+        brief,
       };
       yield {
         type: "piece",
@@ -235,7 +265,7 @@ export async function* writeStages(input: {
         fast,
         "extend",
         meter,
-        input.topic,
+        brief,
       );
     }
     assertEssayLength(extended, outline.wordCountTarget);
@@ -255,15 +285,18 @@ export async function* writeStages(input: {
       input.style,
       fast,
       outline.wordCountTarget,
+      brief,
       meter,
       essayLengthFloor(outline.wordCountTarget),
       notes.text,
-      input.topic,
     );
-    const content = finishEssay(
-      outline.title,
-      styled,
-      essayLengthFloor(outline.wordCountTarget),
+    let content = capEssayLength(
+      finishEssay(
+        outline.title,
+        styled,
+        essayLengthFloor(outline.wordCountTarget),
+      ),
+      outline.wordCountTarget,
     );
     assertEssayLength(content, outline.wordCountTarget);
     yield {
@@ -275,13 +308,42 @@ export async function* writeStages(input: {
       } / ${outline.wordCountTarget} words · ${cost()}`,
     };
 
+    stage = "briefcheck";
+    yield { type: "stage", id: "briefcheck", status: "active" };
+    const briefCheck = await enforceBrief({
+      essay: content,
+      brief,
+      notes: notes.text,
+      checker,
+      mercury,
+      writer: fast,
+      floorWords: essayLengthFloor(outline.wordCountTarget),
+      wordCountTarget: outline.wordCountTarget,
+      meter,
+      supportedParams: catalog.get(checker.modelId)?.supportedParams,
+    });
+    content = briefCheck.text;
+    assertEssayLength(content, outline.wordCountTarget);
+    if (briefCheck.revised) {
+      yield { type: "piece", piece: briefcheckPiece(slug, content) };
+    }
+    yield {
+      type: "stage",
+      id: "briefcheck",
+      status: briefCheck.skipped || (!briefCheck.pass && !briefCheck.revised)
+        ? "warning"
+        : "done",
+      detail: `${briefCheck.detail} · ${cost()}`,
+    };
+
     stage = "factcheck";
     yield { type: "stage", id: "factcheck", status: "active" };
     const hits = citableHits(research.hits);
     const save = async (checked: Awaited<ReturnType<typeof checkClaims>>) => {
-      const markdown = essayMarkdown(
+      const markdown = essayReadyToSave(
         publishedTitle(input.topic, outline.title, checked.text),
         checked.text,
+        outline.wordCountTarget,
       );
       const notesMarkdown = notesRecord({
         notes: notes.text,
@@ -289,6 +351,8 @@ export async function* writeStages(input: {
         draftModels: drafts.map((item) => item.model),
         synthesisModel: synthesis.model,
         cost: cost(),
+        brief: briefSidecar(brief),
+        briefcheck: briefcheckSidecar(briefCheck),
         factcheck: factcheckRecord(checked),
       });
       await writeOutputFile(`output/${slug}.md`, markdown);
@@ -331,7 +395,6 @@ export async function* writeStages(input: {
       yield { type: "error", stage: "factcheck", error: detail };
       return;
     }
-    assertEssayLength(checked.text, outline.wordCountTarget);
     const saved = await save(checked);
     const note = checker.note ? ` · ${checker.note}` : "";
     yield {

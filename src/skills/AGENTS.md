@@ -14,11 +14,14 @@ inventing statistics, studies, quotes, or sources.
 
 - Styles: economist, strunk-white, monocle, professional; unknown names fall
   back to professional
-- Style pass edits the draft into one essay. Cut praise, repetition, and
-  sentences that are not about the subject. You may keep argument and general
-  knowledge already in the draft. Do not invent statistics, studies, quotes, or
-  sources. Do not add markdown links. The writer sees `writerFacts`, not source
-  titles. Only the notes prefix is marked for Anthropic prompt cache
+- Style pass edits the draft into one essay. The preset controls wording:
+  sentence length, voice, cutting filler and repetition. It must not change the
+  brief's tone, purpose, or humour. Cut empty praise and filler; keep humour,
+  irony, and tone the brief asks for. Do not invent statistics, studies, quotes,
+  or sources. Do not add markdown links, URLs, or a call to action, and do not
+  keep one already in the draft. The writer sees `writerFacts`, not source
+  titles. The brief is required. The brief block plus the notes prefix is the
+  Anthropic cache block, including when notes are empty
 - If that edit is still one paragraph per note, style asks once more for one
   essay. Keep that rewrite when it ends as a sentence, has at least
   `essayLengthFloor` words, and is not a source survey, or has fewer
@@ -28,7 +31,8 @@ inventing statistics, studies, quotes, or sources.
 - Inputs under 200 words still reject a rewrite under half the original word
   count
 - Do not invent facts to hit the count. Extend already ran, so added sentences
-  are styled. Do not cut below the length floor
+  are styled. The style prompt states the floor-to-ceiling range. Do not cut
+  below the length floor or past the ceiling
 - Missing API key returns the input unchanged
 - A cut-off style reply is discarded. The input is kept
 

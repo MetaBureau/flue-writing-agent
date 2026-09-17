@@ -1,11 +1,12 @@
 import {
   describesSourcePage,
+  notesPrefix,
   sharedWordRatio,
-  systemMessage,
 } from "./agents/write.ts";
 import { CutOffReply, type RunMeter, streamChat } from "./complete.ts";
 import type { SearchHit } from "./notes.ts";
 import {
+  DRAFT_MODELS,
   PROVIDERS,
   type ResolvedProvider,
   resolveProvider,
@@ -31,7 +32,8 @@ function claimStatus(value: unknown): ClaimStatus | undefined {
 export const FACTCHECK_RULE =
   "Check only checkable specifics: numbers, dates, named studies, quotes, and attributed claims. Mark those supported when a note URL backs them, unsupported when the notes do not. Mark argument, interpretation, examples, transitions, and widely known general knowledge as not-a-claim.";
 
-export const DEFAULT_CHECK_MODEL = "openai/gpt-4.1";
+export const DEFAULT_CHECK_MODEL = "google/gemini-3.1-flash-lite";
+const CHECK_FALLBACK = "openai/gpt-4.1";
 
 export interface FactCheckResult {
   text: string;
@@ -62,7 +64,32 @@ export function citableHits(hits: readonly SearchHit[]): SearchHit[] {
   return hits.filter((hit) => hit.url && !describesSourcePage(hit.content));
 }
 
-export function verdictsFromContent(content: string): ClaimVerdict[] {
+export const CLAIM_BATCH_SIZE = 25;
+
+export function claimBatches(
+  claims: readonly string[],
+  size = CLAIM_BATCH_SIZE,
+): string[][] {
+  const batches: string[][] = [];
+  for (let i = 0; i < claims.length; i += size) {
+    batches.push(claims.slice(i, i + size));
+  }
+  return batches;
+}
+
+export function factcheckTokenCap(claimCount: number): number {
+  return Math.min(8192, Math.max(256, claimCount * 80 + 128));
+}
+
+function claimIndex(value: unknown): number | undefined {
+  const index = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(index) && index >= 1 ? index : undefined;
+}
+
+export function verdictsFromContent(
+  content: string,
+  claims: readonly string[] = [],
+): ClaimVerdict[] {
   const start = content.indexOf("{");
   const end = content.lastIndexOf("}");
   if (start === -1 || end <= start) return [];
@@ -73,14 +100,15 @@ export function verdictsFromContent(content: string): ClaimVerdict[] {
     ) {
       return [];
     }
-    const claims = (parsed as { claims: unknown }).claims;
-    if (!Array.isArray(claims)) return [];
+    const rows = (parsed as { claims: unknown }).claims;
+    if (!Array.isArray(rows)) return [];
     const verdicts: ClaimVerdict[] = [];
-    for (const row of claims) {
+    for (const row of rows) {
       if (typeof row !== "object" || row === null) continue;
-      const text = "text" in row && typeof row.text === "string"
-        ? row.text
-        : "";
+      const index = "i" in row ? claimIndex(row.i) : undefined;
+      const numbered = index ? claims[index - 1] : undefined;
+      const text = numbered ||
+        ("text" in row && typeof row.text === "string" ? row.text : "");
       const status = "status" in row ? claimStatus(row.status) : undefined;
       const url = "url" in row && typeof row.url === "string" ? row.url : "";
       if (!text || !status) continue;
@@ -120,19 +148,28 @@ export function checkerReplacement(
   if (!listedCheckModel(asked)) {
     return `${label} ${asked} is not a HaiMaker model; using ${used}`;
   }
+  if ((DRAFT_MODELS as readonly string[]).includes(asked)) {
+    return `${label} ${asked} matches a drafter; using ${used}`;
+  }
   return `${label} ${asked} matches the writer; using ${used}`;
 }
 
+function clashesWithDrafter(id: string): boolean {
+  return (DRAFT_MODELS as readonly string[]).includes(id);
+}
+
 export function checkModelId(
-  writerModelId: string,
+  _writerModelId: string,
   requested?: string,
 ): string {
   const chosen = requested?.trim() || envCheckModel() || DEFAULT_CHECK_MODEL;
   const id = listedCheckModel(chosen) ? chosen : DEFAULT_CHECK_MODEL;
-  if (id !== writerModelId) return id;
-  if (id !== DEFAULT_CHECK_MODEL) return DEFAULT_CHECK_MODEL;
-  return PROVIDERS.haimaker.models.find((model) => model.id !== writerModelId)
-    ?.id ?? "google/gemini-3.1-flash-lite";
+  if (!clashesWithDrafter(id)) return id;
+  if (!clashesWithDrafter(DEFAULT_CHECK_MODEL)) return DEFAULT_CHECK_MODEL;
+  return listedCheckModel(CHECK_FALLBACK) && !clashesWithDrafter(CHECK_FALLBACK)
+    ? CHECK_FALLBACK
+    : PROVIDERS.haimaker.models.find((model) => !clashesWithDrafter(model.id))
+      ?.id ?? DEFAULT_CHECK_MODEL;
 }
 
 export interface CheckerTarget extends ResolvedProvider {
@@ -239,12 +276,15 @@ export function applyFactCheck(
   };
 }
 
-export function factcheckUserPrompt(claims: readonly string[]): string {
+export function factcheckUserPrompt(
+  claims: readonly string[],
+  start = 1,
+): string {
   return [
-    "Check these claims against the notes. Return JSON {claims: [{text, status, url}]}.",
-    "status is supported, unsupported, or not-a-claim. url must be a URL from the notes, or empty.",
+    "Check these claims against the notes. Return JSON {claims: [{i, status, url}]}.",
+    "i is the claim number shown below. Do not repeat the claim text. status is supported, unsupported, or not-a-claim. url must be a URL from the notes, or empty.",
     FACTCHECK_RULE,
-    claims.map((claim, index) => `${index + 1}. ${claim}`).join("\n"),
+    claims.map((claim, index) => `${start + index}. ${claim}`).join("\n"),
   ].join("\n\n");
 }
 
@@ -272,28 +312,57 @@ export async function checkClaims(
   if (hits.length === 0) {
     return { ...skipped, detail: "no sources to check" };
   }
+  const batches = claimBatches(claims);
+  let cutOff = false;
+  let verdicts: ClaimVerdict[] = [];
   try {
-    const content = (await streamChat(model, [
-      systemMessage(
-        notes,
-        `Match claims to those notes. ${FACTCHECK_RULE}`,
-      ),
-      { role: "user", content: factcheckUserPrompt(claims) },
-    ], {
-      temperature: 0,
-      label: "factcheck",
-      maxTokens: 4096,
-      meter,
-    })).content;
-    const verdicts = verdictsFromContent(content);
-    if (verdicts.length === 0) {
-      return { ...skipped, detail: "fact-check returned no claims" };
-    }
-    return { ...applyFactCheck(text, verdicts, hits), modelId: model.modelId };
+    const parts = await Promise.all(batches.map(async (batch, index) => {
+      const start = index * CLAIM_BATCH_SIZE + 1;
+      try {
+        const content = (await streamChat(model, [
+          {
+            role: "system",
+            content: `${notesPrefix(notes)}\n\nMatch claims to those notes. ${FACTCHECK_RULE}`,
+            cachedPrefix: notesPrefix(notes),
+          },
+          { role: "user", content: factcheckUserPrompt(batch, start) },
+        ], {
+          temperature: 0,
+          label: batches.length > 1
+            ? `factcheck:${index + 1}`
+            : "factcheck",
+          maxTokens: factcheckTokenCap(batch.length),
+          meter,
+        })).content;
+        return verdictsFromContent(content, claims);
+      } catch (error) {
+        if (error instanceof CutOffReply) {
+          cutOff = true;
+          console.warn(`[factcheck] batch ${index + 1} cut off`);
+          return [];
+        }
+        throw error;
+      }
+    }));
+    verdicts = parts.flat();
   } catch (error) {
     if (error instanceof CutOffReply) {
       return { ...skipped, detail: error.message };
     }
     throw error;
   }
+  if (verdicts.length === 0) {
+    return {
+      ...skipped,
+      detail: cutOff
+        ? "fact-check was cut off"
+        : "fact-check returned no claims",
+    };
+  }
+  const checked = {
+    ...applyFactCheck(text, verdicts, hits),
+    modelId: model.modelId,
+  };
+  if (cutOff) checked.detail = `${checked.detail} · a batch was cut off`;
+  return checked;
 }

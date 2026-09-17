@@ -24,7 +24,7 @@ export const styles: Record<StyleName, StyleRules> = {
       "strong verbs",
     ],
     transformation:
-      "Use active voice and short sentences. Cut praise, passion, mission statements, and repeated points. Keep names and numbers already in the draft",
+      "Use active voice and short sentences. Omit empty praise, passion, and mission statements. Keep names, numbers, and humour already in the draft",
     sample: "Markets react sharply when policy shifts.",
   },
   "strunk-white": {
@@ -65,5 +65,5 @@ export function styleFromData(
 export function styleSystemPrompt(style: StyleRules): string {
   return `Apply ${style.name} style rules: ${
     style.rules.join(", ")
-  }. Transformation goal: ${style.transformation}. Example sentence: ${style.sample} Do not invent statistics, studies, quotes, or sources. You may keep argument and general knowledge already in the draft. Cut praise and repetition.`;
+  }. Transformation goal: ${style.transformation}. Example sentence: ${style.sample} The preset controls wording: sentence length, voice, and cutting filler and repetition. Do not change the brief's tone, purpose, or humour. Do not invent statistics, studies, quotes, or sources. You may keep argument and general knowledge already in the draft. Cut empty praise and filler; keep humour, irony, and tone the brief asks for.`;
 }

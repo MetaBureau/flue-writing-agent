@@ -40,8 +40,14 @@ extension used by `deno task start`.
   longest-draft fallback sets `fallback: true` and is logged as a warning
 - Drafts write one essay from the notes that belong to the subject. Write about
   `wordCountTarget` words. Say each specific fact once. Notes source specifics;
-  argument and general knowledge are allowed. Do not paste source titles, URLs,
-  or markdown links
+  argument and general knowledge are allowed. `briefBlock` is on the cached
+  prefix and in the user prompt. Stage rules are defaults. Close in a way that
+  serves the brief's purpose. Humour, irony, or narrative are allowed when the
+  brief asks. Do not paste source titles, URLs, markdown links, or a call to
+  action. `stripBodyLinks` removes body links and URLs. `dropCallsToAction`
+  removes only shop phrases (`click here`, `shop now`, `buy now`, `order now`,
+  `visit our`). Ordinary sentences stay. `essayReadyToSave` cleans, then checks
+  the length floor, so a deletion cannot save a short essay
 - `draftingNotes` drops paragraphs that describe the source page
   (`students can use`, `contains N words`) or that are about writing an essay
   (`admissions essay`, `how to write`). The notes file keeps source titles and
@@ -63,8 +69,12 @@ extension used by `deno task start`.
 - Extend weaves unused note facts into the existing essay until
   `wordCountTarget` or the call cap. Each weave replaces the draft. It rejects a
   reply that copies the draft and appends, a reply that is not a finished essay,
-  a reply that does not grow, and a cut-off. `assertEssayLength` then requires
-  `essayLengthFloor` (85% of the request)
+  a   reply that does not grow, and a cut-off. `assertEssayLength` then requires
+  `essayLengthFloor` (85% of the request). Merge and extend prompts state
+  `lengthRange`: between that floor and `essayLengthCeiling` (115%).
+  `capEssayLength` trims body sentences from the paragraph before the close,
+  keeping the first and last paragraphs, and does not go under the floor.
+  Synthesis treats repetition as a fault
 - The saved essay is one `#` title, a `{n} words` line, then the body. No `## Style:` line. That count and the length floor exclude the Sources list. A leading title line, a repeated paragraph, an unfinished sentence, and a sentence about the source paper are stripped before fact-check, unless that strip would drop the body below `essayLengthFloor`. The file name is the topic, not the outline title
 - Missing API key: heuristic outline and stub drafts (one per keyless model), no
   network. Missing Mercury and writer keys fall synthesis back to the longest

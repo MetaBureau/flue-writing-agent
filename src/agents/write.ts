@@ -1,3 +1,4 @@
+import type { Brief } from "../brief.ts";
 import {
   type ChatMessage,
   type CompletionTarget,
@@ -5,9 +6,19 @@ import {
   type RunMeter,
   streamChat,
 } from "../complete.ts";
-import { DEFAULT_ESSAY_LENGTH, essayLengthFloor, modelSlug } from "../contract.ts";
+import {
+  DEFAULT_ESSAY_LENGTH,
+  essayLengthCeiling,
+  essayLengthFloor,
+  lengthRange,
+  modelSlug,
+} from "../contract.ts";
 
-export type SourceNotes = { readonly text: string; readonly topic?: string };
+export type SourceNotes = {
+  readonly text: string;
+  readonly topic?: string;
+  readonly brief?: Brief;
+};
 export type EditorialStyle =
   | "economist"
   | "strunk-white"
@@ -232,12 +243,108 @@ export function publishedTitle(
   return words.length >= 4 ? words.join(" ") : titled || topic.trim();
 }
 
+const CALL_TO_ACTION =
+  /\b(?:click here|shop now|buy now|order now|visit our)\b/i;
+
+export function isCallToAction(sentence: string): boolean {
+  return CALL_TO_ACTION.test(sentence);
+}
+
+export function stripBodyLinks(text: string): string {
+  return text
+    .replace(/\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/https?:\/\/[^\s)]+|www\.[^\s)]+/gi, "")
+    .replace(/\(\s*\)/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([.!?])/g, "$1");
+}
+
+export function dropCallsToAction(text: string): string {
+  const cleaned = stripBodyLinks(text);
+  return cleaned.split(/\n\n+/).map((paragraph) =>
+    paragraph.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/).filter((
+      sentence,
+    ) => sentence && !isCallToAction(sentence)).join(" ").trim()
+  ).filter(Boolean).join("\n\n");
+}
+
+export function cleanEssayBody(text: string): string {
+  const { prose, sources } = splitEssaySources(text);
+  const clean = dropCallsToAction(prose);
+  return sources ? `${clean}\n\n${sources}` : clean;
+}
+
 export function essayMarkdown(title: string, body: string): string {
-  const { prose, sources } = splitEssaySources(body);
+  const cleaned = cleanEssayBody(body);
+  const { prose, sources } = splitEssaySources(cleaned);
   const words = bodyWordCount(prose);
   const sourceBlock = sources ? `\n\n${sources}\n` : "\n";
   return `# ${title.trim()}\n\n${words} words\n\n${prose}${sourceBlock}`;
 }
+
+function paragraphSentences(paragraph: string): string[] {
+  return paragraph.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/).filter(
+    Boolean,
+  );
+}
+
+function renderParagraphs(paragraphs: readonly (readonly string[])[]): string {
+  return paragraphs.map((sentences) => sentences.join(" ")).filter(Boolean)
+    .join("\n\n");
+}
+
+export function capEssayLength(text: string, target: number): string {
+  const ceiling = essayLengthCeiling(target);
+  const floor = essayLengthFloor(target);
+  const { prose, sources } = splitEssaySources(text);
+  const withSources = (body: string) =>
+    sources ? `${body}\n\n${sources}` : body;
+  if (countWords(prose) <= ceiling) return withSources(prose);
+  const paragraphs = prose.split(/\n\n+/).map(paragraphSentences).filter((
+    sentences,
+  ) => sentences.length > 0);
+  if (paragraphs.length === 0) return withSources(prose);
+  if (paragraphs.length === 1 && paragraphs[0].length < 3) {
+    return withSources(prose);
+  }
+  const opening = paragraphs.length === 1
+    ? [paragraphs[0][0]]
+    : paragraphs[0];
+  const close = paragraphs.length === 1
+    ? [paragraphs[0][paragraphs[0].length - 1]]
+    : paragraphs[paragraphs.length - 1];
+  const body = paragraphs.length === 1
+    ? [paragraphs[0].slice(1, -1)]
+    : paragraphs.slice(1, -1).map((sentences) => [...sentences]);
+  const sized = () => countWords(renderParagraphs([opening, ...body, close]));
+  while (sized() > ceiling) {
+    let index = body.length - 1;
+    while (index >= 0 && body[index].length === 0) index -= 1;
+    if (index < 0) break;
+    const shorter = body[index].slice(0, -1);
+    const trial = body.map((sentences, item) =>
+      item === index ? shorter : sentences
+    );
+    if (
+      countWords(renderParagraphs([opening, ...trial, close])) < floor
+    ) break;
+    body[index] = shorter;
+  }
+  return withSources(renderParagraphs([opening, ...body, close]));
+}
+
+export function essayReadyToSave(
+  title: string,
+  body: string,
+  target: number,
+): string {
+  const markdown = essayMarkdown(title, capEssayLength(body, target));
+  assertEssayLength(markdown, target);
+  return markdown;
+}
+
+export const REPETITION_FAULT =
+  "Repetition is a fault. Do not repeat a phrase, a name, or a point. Do not reuse a formula.";
 
 export function finishEssay(
   title: string,
@@ -265,6 +372,7 @@ export function finishEssay(
         /\b(?:working group|this paper|this study|this article|this framework|points out)\b/i
           .test(sentence)
       ) return false;
+      if (isCallToAction(sentence)) return false;
       return true;
     });
     const next = sentences.join(" ").trim();
@@ -275,14 +383,14 @@ export function finishEssay(
     kept.push(next);
   }
   const cleaned = kept.join("\n\n");
-  const original = stripLeadingTitle(text);
+  const original = dropCallsToAction(stripLeadingTitle(text));
   if (
     floorWords > 0 && countWords(cleaned) < floorWords &&
     countWords(original) >= floorWords
   ) {
     return original;
   }
-  return cleaned;
+  return dropCallsToAction(cleaned);
 }
 
 export function notesRecord(input: {
@@ -291,14 +399,18 @@ export function notesRecord(input: {
   draftModels: readonly string[];
   synthesisModel: string;
   cost: string;
+  brief?: string;
+  briefcheck?: string;
   factcheck?: string;
 }): string {
   const model =
     `outline ${input.outlineModel}; drafts ${input.draftModels.join(", ")}; synthesis ${input.synthesisModel}`;
-  const findings = input.factcheck?.trim()
-    ? `\n\n${input.factcheck.trim()}\n`
-    : "\n";
-  return `Model: ${model}\nCost: ${input.cost}${findings}\n${input.notes.trim()}\n`;
+  const findings = [input.brief, input.briefcheck, input.factcheck]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const block = findings ? `\n\n${findings}\n` : "\n";
+  return `Model: ${model}\nCost: ${input.cost}${block}\n${input.notes.trim()}\n`;
 }
 
 export function groundedInNote(note: string, extra: string): boolean {
@@ -429,19 +541,74 @@ function parseOutline(content: string, topic: string): Outline {
 export const NOTES_GROUNDING =
   "Notes are the source for specific facts, figures, quotes, and named studies. You may add argument, interpretation, examples, transitions, and widely known general knowledge. Do not invent statistics, studies, quotes, or sources. Do not present a weak source such as a forum post or a TIL as research.";
 
+export const BRIEF_PRECEDENCE =
+  "Stage rules below are defaults. Where a rule conflicts with the brief's audience, purpose, tone, or constraints, follow the brief. Never break the grounding rule: do not invent statistics, studies, quotes, or sources.";
+
+export const BRIEF_ASK = "Write the essay the brief asks for.";
+
+export const CLAIM_ADVANCE =
+  "The opening states one claim about that topic. Every paragraph advances that claim. You may use humour, irony, or narrative when the brief asks.";
+
+export function topicBrief(text: string): Brief {
+  return {
+    text,
+    subject: "",
+    claim: "",
+    audience: "",
+    purpose: "",
+    tone: "",
+    constraints: [],
+  };
+}
+
+export function briefFromNotes(notes: SourceNotes): Brief {
+  return notes.brief ?? topicBrief(notes.topic ?? notes.text);
+}
+
+export function briefBlock(brief: Brief): string {
+  const fields = [
+    brief.subject ? `Subject: ${brief.subject}` : "",
+    brief.claim ? `Claim: ${brief.claim}` : "",
+    brief.audience ? `Audience: ${brief.audience}` : "",
+    brief.purpose ? `Purpose: ${brief.purpose}` : "",
+    brief.tone ? `Tone: ${brief.tone}` : "",
+    brief.constraints.length > 0
+      ? `Constraints: ${brief.constraints.join("; ")}`
+      : "",
+  ].filter(Boolean);
+  return [
+    "Brief (from the user; it governs every choice below):",
+    brief.text,
+    fields.length > 0 ? fields.join(" · ") : "",
+    BRIEF_PRECEDENCE,
+  ].filter(Boolean).join("\n");
+}
+
 export function notesPrefix(notes: string): string {
   return `Research notes:\n${notes}`;
 }
 
-export function stageSystem(notes: string, instruction: string): string {
-  return `${notesPrefix(notes)}\n\n${instruction}`;
+export function cachedPrefix(brief: Brief, notes: string): string {
+  return `${briefBlock(brief)}\n\n${notesPrefix(notes)}`;
 }
 
-export function systemMessage(notes: string, instruction: string): ChatMessage {
+export function stageSystem(
+  notes: string,
+  instruction: string,
+  brief: Brief,
+): string {
+  return `${cachedPrefix(brief, notes)}\n\n${instruction}`;
+}
+
+export function systemMessage(
+  notes: string,
+  instruction: string,
+  brief: Brief,
+): ChatMessage {
   return {
     role: "system",
-    content: stageSystem(notes, instruction),
-    cachedPrefix: notesPrefix(notes),
+    content: stageSystem(notes, instruction, brief),
+    cachedPrefix: cachedPrefix(brief, notes),
   };
 }
 
@@ -467,15 +634,16 @@ export const OUTLINE_RESPONSE_FORMAT = {
 };
 
 export function outlineUserPrompt(
-  topic: string,
-  words = wordCountFromTopic(topic),
+  brief: Brief,
+  words = wordCountFromTopic(brief.text),
 ): string {
   return [
-    `The essay is about: ${topic}.`,
+    briefBlock(brief),
+    BRIEF_ASK,
     `Outline a ${words}-word essay. Draw specific facts, figures, quotes, and named studies from the notes.`,
     "Return JSON: {title: string, sections: string[], wordCountTarget: number}",
-    "The opening states one claim about that topic. Every section advances that claim. Four sections at most.",
-    "The opening and the close may frame the claim with argument and widely known general knowledge. Do not invent a statistic, a study, a quote, or a source.",
+    `${CLAIM_ADVANCE} Every section advances that claim. Four sections at most.`,
+    "The opening and the close may frame the claim with argument and widely known general knowledge. Close in a way that serves the brief's purpose. Do not invent a statistic, a study, a quote, or a source.",
     "The notes are one set of facts, not a list of sections. Do not make a section for each source.",
     "Do not use a company self-description heading such as Who are we.",
   ].join("\n\n");
@@ -485,25 +653,26 @@ export const DRAFT_SYSTEM = `Write one essay. ${NOTES_GROUNDING}`;
 
 export function draftUserPrompt(
   outline: Pick<Outline, "title" | "sections" | "wordCountTarget">,
-  topic = "",
+  brief: Brief = topicBrief(""),
 ): string {
   const sections = outline.sections.map((section) => `- ${section}`).join("\n");
   return [
-    topic ? `The essay is about: ${topic}.` : "Write the essay.",
+    briefBlock(brief),
+    BRIEF_ASK,
     `Title: ${outline.title}`,
     `Sections, in this order:\n${sections}`,
-    "The notes are one set of facts, not a list of sections. The opening states one claim about that topic. Every paragraph advances that claim. Do not give each source its own paragraph.",
-    `Write about ${outline.wordCountTarget} words. ${NOTES_GROUNDING} Close on a fact you already used.`,
-    "Do not paste source titles, URLs, or markdown links. Citations are added later.",
+    `The notes are one set of facts, not a list of sections. ${CLAIM_ADVANCE} Do not give each source its own paragraph.`,
+    `Write about ${outline.wordCountTarget} words. ${NOTES_GROUNDING} Close in a way that serves the brief's purpose.`,
+    "Do not paste source titles, URLs, markdown links, or a call to action. Citations are added later.",
     "Say each specific fact once. Write each fact in full sentences. Leave out notes that are not about the subject.",
   ].join("\n\n");
 }
 
 export const SYNTHESIS_SYSTEM =
-  `Write one essay from the drafts. ${NOTES_GROUNDING} Take the strongest claim, structure, paragraphs, and phrasing from each draft. Keep the best-supported specifics. Remove repetition. Return only the essay.`;
+  `Write one essay from the drafts. ${NOTES_GROUNDING} Serve the brief's audience, purpose, and tone. Take the strongest claim, structure, paragraphs, and phrasing from each draft that fit that purpose. Keep the best-supported specifics. ${REPETITION_FAULT} Return only the essay.`;
 
 export function synthesisUserPrompt(
-  topic: string,
+  brief: Brief,
   outline: Outline,
   drafts: readonly Draft[],
 ): string {
@@ -513,11 +682,12 @@ export function synthesisUserPrompt(
     return `Draft ${letter}:\n${draft.content.trim()}`;
   }).join("\n\n");
   return [
-    `The essay is about: ${topic}.`,
+    briefBlock(brief),
+    BRIEF_ASK,
     `Title: ${outline.title}`,
     `Sections, in this order:\n${sections}`,
-    `Write about ${outline.wordCountTarget} words.`,
-    "Take the strongest claim, structure, paragraphs, and phrasing from each draft. Keep the best-supported specifics. Remove repetition. Hit the word count. Return only the essay.",
+    lengthRange(outline.wordCountTarget),
+    `Serve the brief's audience, purpose, and tone. Take the strongest claim, structure, paragraphs, and phrasing from each draft that fit that purpose. Keep the best-supported specifics. ${REPETITION_FAULT} Stay inside that range. Return only the essay.`,
     labelled,
   ].join("\n\n");
 }
@@ -562,31 +732,35 @@ export function extensionUserPrompt(
   notes: string,
   target: number,
   current: number,
+  brief: Brief = topicBrief(""),
 ): string {
   const ask = wordsToAsk(current, target);
   return [
-    `The draft is ${current} words. Write ${ask} more words so the piece reaches at least ${target}.`,
+    briefBlock(brief),
+    BRIEF_ASK,
+    `The draft is ${current} words. ${lengthRange(target)} Write ${ask} more words only if that stays inside the range.`,
     "Expand facts already in the draft and in the source notes. Write the thin sections out in full sentences.",
     "Do not add a new section. You may add argument and general knowledge. Do not invent statistics, studies, quotes, or sources. Do not repeat a paragraph already in the draft.",
-    "Match the voice of the draft so far. Return only the new paragraphs.",
+    "Match the brief's tone. Return only the new paragraphs.",
     `Source notes:\n${notes}`,
     `Draft so far:\n${draft}`,
   ].join("\n\n");
 }
 
 export function weaveUserPrompt(
-  topic: string,
+  brief: Brief,
   draft: string,
   target: number,
 ): string {
   return [
-    `The essay is about: ${topic}.`,
-    `Return the full essay of about ${target} words. It is ${
-      countWords(draft)
-    } words. Keep every fact already in the draft. Weave unused notes until the essay reaches ${target} words.`,
-    "The notes are one set of facts, not a list of sections. Keep the opening claim. Weave unused facts into the paragraphs they belong to.",
+    briefBlock(brief),
+    BRIEF_ASK,
+    `The essay is ${countWords(draft)} words. ${
+      lengthRange(target)
+    } Keep every fact already in the draft. Weave unused notes until the essay is inside that range.`,
+    `The notes are one set of facts, not a list of sections. ${CLAIM_ADVANCE} Weave unused facts into the paragraphs they belong to.`,
     "Do not add a paragraph for each source. Do not repeat a point. You may add argument and general knowledge. Do not invent statistics, studies, quotes, or sources.",
-    "Do not paste source titles, URLs, or markdown links. End with a complete sentence. Return only the essay.",
+    "Do not paste source titles, URLs, markdown links, or a call to action. Close in a way that serves the brief's purpose. End with a complete sentence. Return only the essay.",
   ].join("\n\n");
 }
 
@@ -666,6 +840,7 @@ export const generateOutline = async (
   words?: number,
 ): Promise<Outline> => {
   const topic = notes.topic ?? notes.text;
+  const brief = briefFromNotes(notes);
   const target = words ?? wordCountFromTopic(topic);
   if (!model.apiKey) {
     console.warn(`${model.name} key not set, using heuristic outline`);
@@ -673,8 +848,8 @@ export const generateOutline = async (
   }
 
   const content = (await streamChat(model, [
-    systemMessage(writerFacts(notes.text), OUTLINE_SYSTEM),
-    { role: "user", content: outlineUserPrompt(topic, target) },
+    systemMessage(writerFacts(notes.text), OUTLINE_SYSTEM, brief),
+    { role: "user", content: outlineUserPrompt(brief, target) },
   ], {
     temperature: 0.2,
     label: "outline",
@@ -698,14 +873,15 @@ export const generateDrafts = async (
 ): Promise<Draft[]> => {
   if (models.length === 0) throw new Error("No draft models");
   const facts = writerFacts(notes.text);
-  const prompt = draftUserPrompt(outline, notes.topic);
+  const brief = briefFromNotes(notes);
+  const prompt = draftUserPrompt(outline, brief);
   const results = await Promise.allSettled(models.map(async (model) => {
     const id = model.modelId ?? model.name;
     if (!model.apiKey) {
       return { model: id, content: `Draft for ${outline.title}` };
     }
     const content = (await streamChat(model, [
-      systemMessage(facts, DRAFT_SYSTEM),
+      systemMessage(facts, DRAFT_SYSTEM, brief),
       { role: "user", content: prompt },
     ], {
       temperature: 0.3,
@@ -742,6 +918,7 @@ export async function synthesizeEssay(
     fallback: true,
     source: "longest-draft",
   });
+  const brief = briefFromNotes(notes);
   const target = mercury.apiKey ? mercury : writer;
   const source = mercury.apiKey ? "mercury" : "writer";
   if (!target.apiKey) {
@@ -751,10 +928,10 @@ export async function synthesizeEssay(
   let reply = "";
   try {
     reply = (await streamChat(target, [
-      systemMessage(writerFacts(notes.text), SYNTHESIS_SYSTEM),
+      systemMessage(writerFacts(notes.text), SYNTHESIS_SYSTEM, brief),
       {
         role: "user",
-        content: synthesisUserPrompt(notes.topic ?? notes.text, outline, drafts),
+        content: synthesisUserPrompt(brief, outline, drafts),
       },
     ], {
       temperature: 0.3,
@@ -787,7 +964,7 @@ export async function extendDraft(
   model: ModelConfig,
   label: string,
   meter?: RunMeter,
-  topic = "",
+  brief: Brief = topicBrief(""),
 ): Promise<string> {
   let text = draft.trim();
   if (!model.apiKey || factualNotes(notes).length === 0) return text;
@@ -809,8 +986,9 @@ export async function extendDraft(
         systemMessage(
           writerFacts(notes),
           `${DRAFT_SYSTEM}\n\nDraft so far:\n${text}`,
+          brief,
         ),
-        { role: "user", content: weaveUserPrompt(topic, text, target) },
+        { role: "user", content: weaveUserPrompt(brief, text, target) },
       ], {
         temperature: 0.4,
         label: `${label}:weave`,

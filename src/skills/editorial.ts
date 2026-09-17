@@ -1,6 +1,10 @@
-import { essayLengthFloor } from "../contract.ts";
+import type { Brief } from "../brief.ts";
+import { lengthRange } from "../contract.ts";
 import { CutOffReply, type RunMeter, streamChat } from "../complete.ts";
 import {
+  briefBlock,
+  BRIEF_ASK,
+  CLAIM_ADVANCE,
   countWords,
   endsAsSentence,
   exclusiveNoteParagraphs,
@@ -44,34 +48,36 @@ export function keepIfNotShortened(
 export function styleUserPrompt(
   text: string,
   wordCountTarget: number,
-  topic = "",
+  brief: Brief,
 ): string {
   const current = countWords(text);
   return [
-    topic
-      ? `Edit this into one essay about: ${topic}.`
-      : "Edit this into one essay.",
-    "The opening states one claim about that topic. Every paragraph advances that claim. Do not give each source its own paragraph.",
-    "Cut praise, a repeated point, an unfinished sentence, and any sentence about the researchers, the working group, or the paper itself.",
+    briefBlock(brief),
+    `Edit this into the essay the brief asks for. ${BRIEF_ASK}`,
+    `${CLAIM_ADVANCE} Do not give each source its own paragraph.`,
+    "Cut empty praise and filler; keep humour, irony, and tone the brief asks for. Cut a repeated point, an unfinished sentence, and any sentence about the researchers, the working group, or the paper itself.",
     "Do not repeat the title. Do not use an abbreviation you have not written out.",
-    "You may shape the opening and the close only from facts already in the draft. Do not invent statistics, studies, quotes, or sources. You may keep argument and general knowledge already in the draft. Cut praise and repetition.",
-    `It is ${current} words. Keep at least ${
-      essayLengthFloor(wordCountTarget)
-    } words. Cut praise and repetition, not the facts that make the length.`,
-    "Do not write source titles or new markdown links. Keep a markdown link already in the draft. Return only the rewritten draft.",
+    "You may shape the opening and the close only from facts already in the draft. Do not invent statistics, studies, quotes, or sources. You may keep argument and general knowledge already in the draft.",
+    `It is ${current} words. ${
+      lengthRange(wordCountTarget)
+    } Cut empty praise and filler, not the facts that make the length.`,
+    "Do not write source titles, URLs, markdown links, or a call to action. Return only the rewritten draft.",
   ].join("\n\n");
 }
 
-export function collapseUserPrompt(topic: string): string {
+export function collapseUserPrompt(
+  brief: Brief,
+  wordCountTarget = 0,
+): string {
   return [
-    topic
-      ? `Rewrite this as one essay about: ${topic}.`
-      : "Rewrite this as one essay.",
+    briefBlock(brief),
+    `Rewrite this as the essay the brief asks for. ${BRIEF_ASK}`,
+    wordCountTarget > 0 ? lengthRange(wordCountTarget) : "",
     "The draft is a source survey. That is rejected.",
-    "Three or four paragraphs. The first states one claim. Later paragraphs use facts from more than one note.",
+    `Three or four paragraphs. ${CLAIM_ADVANCE} Later paragraphs use facts from more than one note.`,
     "Do not give a note its own paragraph. Do not start a sentence with a definition.",
-    "Cut praise. Close on a fact already in the draft. Do not invent statistics, studies, quotes, or sources. You may keep argument and general knowledge already in the draft. Return only the essay.",
-  ].join("\n\n");
+    "Cut empty praise and filler; keep humour, irony, and tone the brief asks for. Close in a way that serves the brief's purpose. Do not invent statistics, studies, quotes, or sources. Do not paste a call to action or a URL. You may keep argument and general knowledge already in the draft. Return only the essay.",
+  ].filter(Boolean).join("\n\n");
 }
 
 export const applyEditorialStyle = async (
@@ -79,10 +85,10 @@ export const applyEditorialStyle = async (
   styleName: string,
   model: ResolvedProvider,
   wordCountTarget: number,
+  brief: Brief,
   meter?: RunMeter,
   floorWords = 0,
   notes = "",
-  topic = "",
 ): Promise<string> => {
   const style = isStyleName(styleName)
     ? styles[styleName]
@@ -94,12 +100,10 @@ export const applyEditorialStyle = async (
     try {
       const instruction = `${styleSystemPrompt(style)}\n\nDraft:\n${text}`;
       edited = (await streamChat(model, [
-        notes
-          ? systemMessage(writerFacts(notes), instruction)
-          : { role: "system", content: instruction },
+        systemMessage(writerFacts(notes), instruction, brief),
         {
           role: "user",
-          content: styleUserPrompt(text, wordCountTarget, topic),
+          content: styleUserPrompt(text, wordCountTarget, brief),
         },
       ], {
         temperature: 0.2,
@@ -135,8 +139,9 @@ export const applyEditorialStyle = async (
       systemMessage(
         writerFacts(notes),
         `${styleSystemPrompt(style)}\n\nDraft:\n${result}`,
+        brief,
       ),
-      { role: "user", content: collapseUserPrompt(topic) },
+      { role: "user", content: collapseUserPrompt(brief, wordCountTarget) },
     ], {
       temperature: 0.2,
       label: `style:${styleName}:essay`,

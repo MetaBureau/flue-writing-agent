@@ -14,10 +14,21 @@ export const ESSAY_LENGTHS = [
 ] as const;
 export const DEFAULT_ESSAY_LENGTH = 900;
 export const LENGTH_FLOOR_RATIO = 0.85;
+export const LENGTH_CEILING_RATIO = 1.15;
 export const PROMPT_OPENING = "What should this essay be about?";
 
 export function essayLengthFloor(words: number): number {
   return Math.round(words * LENGTH_FLOOR_RATIO);
+}
+
+export function essayLengthCeiling(words: number): number {
+  return Math.round(words * LENGTH_CEILING_RATIO);
+}
+
+export function lengthRange(target: number): string {
+  return `Keep it between ${essayLengthFloor(target)} and ${
+    essayLengthCeiling(target)
+  } words. Do not guess the count.`;
 }
 
 export function isEssayLength(
@@ -27,12 +38,14 @@ export function isEssayLength(
 }
 
 export const WRITE_STAGES = [
+  { id: "brief", label: "Brief" },
   { id: "research", label: "Research" },
   { id: "outline", label: "Outline" },
   { id: "drafts", label: "Drafts" },
   { id: "synthesis", label: "Synthesis" },
   { id: "extend", label: "Extend" },
   { id: "style", label: "Style" },
+  { id: "briefcheck", label: "Brief check" },
   { id: "factcheck", label: "Fact-check" },
 ] as const;
 
@@ -77,8 +90,9 @@ export function pieceRank(id: string): number {
   if (id === "notes") return 0;
   if (id.startsWith("draft:")) return 1;
   if (id === "synthesis") return 2;
-  if (id === "essay") return 3;
-  return 4;
+  if (id === "briefcheck") return 3;
+  if (id === "essay") return 4;
+  return 5;
 }
 
 export function draftPiece(
@@ -103,6 +117,15 @@ export function synthesisPiece(slug: string, markdown: string): Piece {
     label: "Synthesis",
     filename: `${slug}.synthesis.md`,
     markdown: `# Synthesis\n\n${markdown.trim()}\n`,
+  };
+}
+
+export function briefcheckPiece(slug: string, markdown: string): Piece {
+  return {
+    id: "briefcheck",
+    label: "Brief revision",
+    filename: `${slug}.brief.md`,
+    markdown: `# Brief revision\n\n${markdown.trim()}\n`,
   };
 }
 

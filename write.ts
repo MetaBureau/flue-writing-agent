@@ -1,4 +1,5 @@
 import { streamChat } from "./src/complete.ts";
+import { briefBlock, topicBrief } from "./src/agents/write.ts";
 
 const apiKey = Deno.env.get("HAIMAKER_API_KEY");
 if (!apiKey) {
@@ -16,9 +17,9 @@ const content = (await streamChat({
   {
     role: "system",
     content:
-      "You are an expert technical writer. Write in the Economist style: direct, active voice, omits needless words.",
+      `${briefBlock(topicBrief(topic))}\n\nYou are an expert technical writer. Write in the Economist style: direct, active voice, omits needless words.`,
   },
-  { role: "user", content: `Write a blog post about: ${topic}` },
+  { role: "user", content: "Write the essay the brief asks for." },
 ], { temperature: 0.7, label: "write" })).content;
 
 await Deno.writeTextFile(

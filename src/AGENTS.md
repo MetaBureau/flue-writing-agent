@@ -7,9 +7,10 @@ pipeline, format output, write `output/<slug>.md`.
 
 ## Ownership
 
-- `workflow.ts` — stage events for the form. Research, outline, drafts, synthesis,
-  extend, style, fact-check, then piece events for notes, each draft, synthesis,
-  and the essay, the essay markdown, and a notes sidecar.
+- `workflow.ts` — stage events for the form. Brief, research, outline, drafts, synthesis,
+  extend, style, brief-check, fact-check, then piece events for notes, each draft, synthesis,
+  a brief revision when one is kept, and the essay, the essay markdown, and a notes sidecar.
+- `brief.ts` — parse the topic into a `Brief`, judge the styled essay, and revise once
 - `factcheck.ts` — match claims to note URLs, cite supported claims, skip
   `not-a-claim`, and record unsupported or unchecked claims in the notes file
 - `providers.ts` — HaiMaker and Mercury registry, each provider's curated
@@ -43,12 +44,19 @@ and style.
   notes prefix only (`cachedPrefix`). The instruction and draft are a second
   system block with no `cache_control`
 - Fact-check calls `CHECK_MODEL`, or the form checker, via `HAIMAKER_API_KEY`.
-  Default is `openai/gpt-4.1`. If that id matches the writer, or `CHECK_MODEL`
-  is not a HaiMaker picker id, use another curated id and log the replacement.
+  Default is `google/gemini-3.1-flash-lite`. The checker may match the writer.
+  It must differ from `DRAFT_MODELS`. If the chosen id is a drafter, use the
+  default, or `openai/gpt-4.1` when the default is also a drafter. If
+  `CHECK_MODEL` is not a HaiMaker picker id, use the default and log the
+  replacement. Do not fall back to DeepSeek or the first other picker id.
   No HaiMaker key skips fact-check before research
   (`no HaiMaker key; not checked`) and still saves the essay. A checker auth or
-  rate-limit error saves the essay marked unchecked, then reports the error. A
-  cut-off or empty verdict list saves without citations. Each source URL is
+  rate-limit error saves the essay marked unchecked, then reports the error.
+  Claims are numbered and checked in batches of 25. The checker returns
+  `{i, status, url}` and does not repeat the claim text. Each batch's token cap
+  scales with its claim count. A cut-off batch leaves those claims unchecked;
+  the other batches are kept. A cut-off of every batch, or an empty verdict
+  list, saves without citations. Each source URL is
   linked once, in a Sources section. A link is not inserted into a sentence.
   Unsupported and unchecked claims stay in the essay and are listed in the
   notes file. Argument, interpretation, examples, transitions, and widely known
@@ -66,7 +74,8 @@ and style.
   `low`, `medium`, or `high`. Omit it by default
 - Picker labels say "can reason" when the catalog sets `supports_reasoning`. Do
   not label a model as reasoning by default from a trial table
-- Research searches the subject, not the writing instruction
+- Research searches the subject plus claim content words
+  (`researchQuery`), not the writing instruction
   (`essay on my pet cat` becomes `my pet cat`). Advanced search. Source count
   and excerpt length scale with the requested word count (`researchBudget`),
   up to 12 sources and 400 words. A second search uses outline section titles.
@@ -79,11 +88,30 @@ and style.
   filtered notes are the source for specific facts, figures, quotes, and named
   studies. Later stages may add argument and widely known general knowledge.
   Do not invent statistics, studies, quotes, or sources
+- `parseBrief` runs first on the writer model. No key, a cut-off, or invalid
+  JSON falls back to the verbatim topic and a `searchQuery` subject. That does
+  not fail the run. Research searches `researchQuery(brief)`: subject plus
+  claim content words. `brief` is required on `systemMessage` and `stageSystem`.
+  `briefBlock` starts the cached prefix for outline, drafts, synthesis, extend,
+  style, and the brief revision, including a style pass with empty notes.
+  Fact-check uses `notesPrefix` and does not get the brief. The interview does
+  not get it. Brief-check uses the checker model. It is told the measured word count and
+  must not judge length. A word-count miss does not force a revision. It fails
+  pasted source text, a source headline, a body link or URL, a call to action,
+  and a stretch that does not serve the claim. When the purpose is amusement,
+  a solemn or merely elevated tone fails; a pass needs actual wit. A leftover
+  link or call to action fails even when the model says pass. It revises at
+  most once on Mercury. The revision treats repetition as a fault. The saved
+  essay is capped at 115% of the target. A skip, or a failed check that
+  keeps the styled essay, is a warning. The notes sidecar records the parsed
+  brief and the verdict. Save strips body links, URLs, and calls to action.
+  `## Sources` links stay
 - Extend weaves until the essay reaches `wordCountTarget` or hits the call cap.
   Each weave replaces the draft with the full essay, or is rejected. A reply
   that copies the draft and appends notes is rejected. A style rewrite must
-  stay at or above `essayLengthFloor` (85% of the request). Saving below that
-  floor throws. Style and extend discard a cut-off reply.
+  stay between `essayLengthFloor` (85%) and `essayLengthCeiling` (115%). Saving
+  below that floor throws. A longer essay is trimmed from the body, keeping
+  the opening and the close. Style and extend discard a cut-off reply.
 - Dry run prints config and does not call models or Tavily beyond the
   key-presence check
 - Atomic write: `output/<slug>.md.tmp` then rename. The slug is the topic, not
@@ -93,12 +121,16 @@ and style.
 - Drafts use `DRAFT_MODELS` on HaiMaker when that key is set, otherwise the writer. Synthesis pins `mercury-2.5`. Empty drafts fail the drafts stage
 - The form interview uses the writer model. It asks one question at a time, including when the topic is empty, stops after five answers, and does not invent facts. A reply that describes how to write an essay is discarded. The topic it fills is still the only brief the pipeline receives
 - The form stream yields a notes piece after research, one piece per draft
-  after drafts, a synthesis piece after synthesis, then replaces notes with the
+  after drafts, a synthesis piece after synthesis, a brief-check piece only when
+  a revision is kept, then replaces notes with the
   sidecar text and yields the essay piece when those files are saved. A
-  longest-draft synthesis fallback yields stage status `warning`. Download
-  names are `<slug>.md`, `<slug>.notes.md`, `<slug>.draft-<model-slug>.md`, and
-  `<slug>.synthesis.md`. `notesRecord` lists the outline model, draft model ids,
-  and synthesis model
+  longest-draft synthesis fallback yields stage status `warning`. A skipped
+  brief check, or a failed check that keeps the styled essay, also yields
+  `warning`. Download
+  names are `<slug>.md`, `<slug>.notes.md`, `<slug>.draft-<model-slug>.md`,
+  `<slug>.synthesis.md`, and `<slug>.brief.md` when a revision is kept.
+  `notesRecord` lists the outline model, draft model ids,
+  synthesis model, the parsed brief, and the brief-check verdict
 
 ## Work Guidance
 
