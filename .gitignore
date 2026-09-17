@@ -1,3 +1,4 @@
+.env
 output/
 .arena/
 node_modules/

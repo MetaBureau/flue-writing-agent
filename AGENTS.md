@@ -94,7 +94,7 @@ Deno Fresh UI plus a Flue agent. `deno task dev` serves the form on port 5175. T
 
 ## User Preferences
 
-- Never commit live API keys. `.env.example` is the public template. This repo currently tracks `.env`; keep placeholders there, not secrets
+- Never commit live API keys. `.env` is gitignored. `.env.example` is the public template; keep placeholders there, not secrets
 - Prefer `deno task` from this repo root (`start`, `dev`, `test`)
 - Keep the notes-only pipeline: Tavily must not feed a synthesized answer into notes
 - Public marketing copy in the parent MetaBureau site is out of scope here
