@@ -3,7 +3,7 @@
 ## Purpose
 
 Rewrite a finished draft for an editorial profile without dropping claims or
-adding facts.
+inventing statistics, studies, quotes, or sources.
 
 ## Ownership
 
@@ -15,10 +15,10 @@ adding facts.
 - Styles: economist, strunk-white, monocle, professional; unknown names fall
   back to professional
 - Style pass edits the draft into one essay. Cut praise, repetition, and
-  sentences that are not about the subject. An opening and a close may use only
-  facts already in the draft. Do not add facts. Do not add markdown links. The
-  writer sees `writerFacts`, not source titles. Only the notes prefix is marked
-  for Anthropic prompt cache
+  sentences that are not about the subject. You may keep argument and general
+  knowledge already in the draft. Do not invent statistics, studies, quotes, or
+  sources. Do not add markdown links. The writer sees `writerFacts`, not source
+  titles. Only the notes prefix is marked for Anthropic prompt cache
 - If that edit is still one paragraph per note, style asks once more for one
   essay. Keep that rewrite when it ends as a sentence, has at least
   `essayLengthFloor` words, and is not a source survey, or has fewer

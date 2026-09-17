@@ -11,8 +11,11 @@ Deterministic checks for pipeline helpers and prompt contracts. No live model or
 ## Local Contracts
 
 - Run with `deno task test` (`deno test --allow-read --allow-write tests/`)
-- Assert prompt wording that encodes notes-only rules, the requested word count, and the style keep rule for a finished cut versus a stub
-- Assert prose rejection, paragraph repeat ratio, source-page note drops, essay markdown without a style line, fact-check citations outside the flags, checker replacement notes, the unchecked notes record, piece download names, the form length list, the 85% length floor, the prompt interview contract, and the Anthropic cache split
+- Assert prompt wording that encodes notes as the source for specifics (argument
+  and general knowledge allowed; invented statistics, quotes, and sources
+  forbidden), the requested word count, synthesis helpers, the Mercury
+  synthesis token cap, and the style keep rule for a finished cut versus a stub
+- Assert prose rejection, paragraph repeat ratio, source-page note drops, essay markdown without a style line, the body word count line, fact-check citations outside the flags, `not-a-claim` skipped by `applyFactCheck`, checker replacement notes, the unchecked notes record, piece download names, the form length list, the 85% length floor excluding Sources, the prompt interview contract, and the Anthropic cache split
 - Research tests must keep ignoring a synthesized `answer` field, ignoring raw page bodies, and dropping empty bodies and furniture sentences
 
 ## Work Guidance

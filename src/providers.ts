@@ -23,7 +23,9 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
       { id: "anthropic/claude-haiku-4-5", label: "Claude Haiku 4.5" },
       { id: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
       { id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+      { id: "mistralai/mistral-large-2512", label: "Mistral Large 2512" },
       { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
+      { id: "moonshotai/kimi-k2-0905", label: "Kimi K2 0905" },
     ],
     baseUrl: "https://api.haimaker.ai/v1",
     apiKeyEnvVar: "HAIMAKER_API_KEY",
@@ -56,6 +58,20 @@ const NAMES: Record<string, string> = {
 function sharedEnv(providerName: string, type: "fast" | "reasoning"): boolean {
   const configured = Deno.env.get(type === "fast" ? "FAST_PROVIDER" : "REASONING_PROVIDER");
   return configured === providerName;
+}
+
+export const DRAFT_MODELS = [
+  "anthropic/claude-haiku-4-5",
+  "mistralai/mistral-large-2512",
+  "moonshotai/kimi-k2-0905",
+] as const;
+
+export function modelLabel(modelId: string): string {
+  for (const config of Object.values(PROVIDERS)) {
+    const found = config.models.find((model) => model.id === modelId);
+    if (found) return found.label;
+  }
+  return modelId;
 }
 
 export function isProviderModel(providerName: string, modelId: string): boolean {

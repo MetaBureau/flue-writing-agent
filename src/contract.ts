@@ -30,13 +30,14 @@ export const WRITE_STAGES = [
   { id: "research", label: "Research" },
   { id: "outline", label: "Outline" },
   { id: "drafts", label: "Drafts" },
+  { id: "synthesis", label: "Synthesis" },
   { id: "extend", label: "Extend" },
   { id: "style", label: "Style" },
   { id: "factcheck", label: "Fact-check" },
 ] as const;
 
 export type StageId = (typeof WRITE_STAGES)[number]["id"];
-export type StageStatus = "pending" | "active" | "done" | "error";
+export type StageStatus = "pending" | "active" | "done" | "warning" | "error";
 
 export type Piece = {
   id: string;
@@ -54,27 +55,54 @@ export function notesPiece(slug: string, markdown: string): Piece {
   };
 }
 
-export function essayPiece(slug: string, markdown: string): Piece {
+export function essayPiece(
+  slug: string,
+  markdown: string,
+  words?: number,
+): Piece {
   return {
     id: "essay",
-    label: "Essay",
+    label: words === undefined ? "Essay" : `Essay · ${words} words`,
     filename: `${slug}.md`,
     markdown,
   };
 }
 
+export function modelSlug(modelId: string): string {
+  const slash = modelId.lastIndexOf("/");
+  return slash === -1 ? modelId : modelId.slice(slash + 1);
+}
+
+export function pieceRank(id: string): number {
+  if (id === "notes") return 0;
+  if (id.startsWith("draft:")) return 1;
+  if (id === "synthesis") return 2;
+  if (id === "essay") return 3;
+  return 4;
+}
+
 export function draftPiece(
   slug: string,
-  voice: string,
+  modelId: string,
   markdown: string,
-  selected: boolean,
+  label?: string,
 ): Piece {
-  const title = voice.charAt(0).toUpperCase() + voice.slice(1);
+  const slugId = modelSlug(modelId);
+  const title = label ?? modelId;
   return {
-    id: `draft:${voice}`,
-    label: selected ? `${title} draft · selected` : `${title} draft`,
-    filename: `${slug}.draft-${voice}.md`,
-    markdown: `# ${title} draft\n\n${markdown.trim()}\n`,
+    id: `draft:${slugId}`,
+    label: title,
+    filename: `${slug}.draft-${slugId}.md`,
+    markdown: `# ${title}\n\n${markdown.trim()}\n`,
+  };
+}
+
+export function synthesisPiece(slug: string, markdown: string): Piece {
+  return {
+    id: "synthesis",
+    label: "Synthesis",
+    filename: `${slug}.synthesis.md`,
+    markdown: `# Synthesis\n\n${markdown.trim()}\n`,
   };
 }
 
@@ -82,7 +110,7 @@ export type WriteEvent =
   | {
     type: "stage";
     id: StageId;
-    status: "active" | "done" | "error";
+    status: "active" | "done" | "warning" | "error";
     detail?: string;
   }
   | { type: "piece"; piece: Piece }

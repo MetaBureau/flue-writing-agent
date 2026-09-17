@@ -7,6 +7,7 @@ import {
   PROMPT_OPENING,
   type StageId,
   type StageStatus,
+  pieceRank,
   WRITE_STAGES,
   type WriteEvent,
 } from "../src/contract.ts";
@@ -30,21 +31,13 @@ function idleStages(): StageMap {
 
 function stepClass(status: StageStatus): string {
   if (status === "done" || status === "active") return "step-primary";
+  if (status === "warning") return "step-warning";
   if (status === "error") return "step-error";
   return "";
 }
 
-const PIECE_ORDER = [
-  "notes",
-  "draft:conversational",
-  "draft:professional",
-  "draft:analytical",
-  "essay",
-];
-
 function pieceOrder(id: string): number {
-  const index = PIECE_ORDER.indexOf(id);
-  return index === -1 ? PIECE_ORDER.length : index;
+  return pieceRank(id);
 }
 
 function upsertPiece(current: Piece[], piece: Piece): Piece[] {
@@ -139,7 +132,9 @@ function PromptInterview(
       }
       setError("The prompt interview returned nothing.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The prompt interview failed.");
+      setError(
+        cause instanceof Error ? cause.message : "The prompt interview failed.",
+      );
     } finally {
       setAsking(false);
     }
@@ -198,7 +193,9 @@ function PromptInterview(
                   <div class="chat-bubble">{turn.question}</div>
                 </div>
                 <div class="chat chat-end">
-                  <div class="chat-bubble chat-bubble-primary">{turn.answer}</div>
+                  <div class="chat-bubble chat-bubble-primary">
+                    {turn.answer}
+                  </div>
                 </div>
               </div>
             ))}
@@ -264,7 +261,8 @@ function PieceModal(
             type="button"
             class="btn"
             disabled={!piece}
-            onClick={() => piece && downloadMarkdown(piece.filename, piece.markdown)}
+            onClick={() =>
+              piece && downloadMarkdown(piece.filename, piece.markdown)}
           >
             Download .md
           </button>
@@ -281,7 +279,14 @@ function PieceModal(
 }
 
 export default function WriteForm(
-  { styles, providers, models, checkModels, defaultCheckModel, providerProblems = {} }: Props,
+  {
+    styles,
+    providers,
+    models,
+    checkModels,
+    defaultCheckModel,
+    providerProblems = {},
+  }: Props,
 ) {
   const [topic, setTopic] = useState("Write an essay about pet cats.");
   const [words, setWords] = useState(DEFAULT_ESSAY_LENGTH);
@@ -299,6 +304,7 @@ export default function WriteForm(
   const [pieces, setPieces] = useState<Piece[]>([]);
   const [openId, setOpenId] = useState("");
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const [busy, setBusy] = useState(false);
   const providerProblem = providerProblems[provider] ?? "";
 
@@ -306,6 +312,7 @@ export default function WriteForm(
     if (event.type === "stage") {
       setStages((current) => ({ ...current, [event.id]: event.status }));
       if (event.detail) setDetail(event.detail);
+      if (event.status === "warning" && event.detail) setWarning(event.detail);
       if (event.status === "error" && event.detail) setError(event.detail);
       return;
     }
@@ -317,7 +324,7 @@ export default function WriteForm(
       setPieces((current) =>
         upsertPiece(current, {
           id: "essay",
-          label: "Essay",
+          label: current.find((item) => item.id === "essay")?.label ?? "Essay",
           filename: event.filename,
           markdown: event.markdown,
         })
@@ -332,6 +339,7 @@ export default function WriteForm(
     event.preventDefault();
     setBusy(true);
     setError("");
+    setWarning("");
     setDetail("");
     setPieces([]);
     setOpenId("");
@@ -492,6 +500,7 @@ export default function WriteForm(
       {providerProblem
         ? <div class="alert alert-error">{providerProblem}</div>
         : null}
+      {warning ? <div class="alert alert-warning">{warning}</div> : null}
       {error ? <div class="alert alert-error">{error}</div> : null}
       {pieces.length > 0
         ? (

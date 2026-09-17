@@ -11,11 +11,25 @@ import {
   resolveProvider,
 } from "./providers.ts";
 
+export type ClaimStatus = "supported" | "unsupported" | "not-a-claim";
+
 export interface ClaimVerdict {
   text: string;
-  status: "supported" | "unsupported";
+  status: ClaimStatus;
   url: string;
 }
+
+function claimStatus(value: unknown): ClaimStatus | undefined {
+  if (
+    value === "supported" || value === "unsupported" || value === "not-a-claim"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+export const FACTCHECK_RULE =
+  "Check only checkable specifics: numbers, dates, named studies, quotes, and attributed claims. Mark those supported when a note URL backs them, unsupported when the notes do not. Mark argument, interpretation, examples, transitions, and widely known general knowledge as not-a-claim.";
 
 export const DEFAULT_CHECK_MODEL = "openai/gpt-4.1";
 
@@ -32,12 +46,14 @@ export interface FactCheckResult {
 }
 
 export function splitClaims(text: string): string[] {
-  return text
+  const prose = text.split(/\n## Sources\s*\n/)[0] ?? text;
+  return prose
     .split(/\n+/)
     .flatMap((paragraph) => paragraph.split(/(?<=[.!?])\s+/))
     .map((sentence) => sentence.trim())
     .filter((sentence) =>
       sentence.length > 0 && !sentence.startsWith("#") &&
+      !/^\d+ words\.?$/i.test(sentence) &&
       sentence.split(/\s+/).length >= 8
     );
 }
@@ -65,11 +81,7 @@ export function verdictsFromContent(content: string): ClaimVerdict[] {
       const text = "text" in row && typeof row.text === "string"
         ? row.text
         : "";
-      const status = "status" in row && row.status === "supported"
-        ? "supported"
-        : "status" in row && row.status === "unsupported"
-        ? "unsupported"
-        : undefined;
+      const status = "status" in row ? claimStatus(row.status) : undefined;
       const url = "url" in row && typeof row.url === "string" ? row.url : "";
       if (!text || !status) continue;
       verdicts.push({ text, status, url });
@@ -199,6 +211,7 @@ export function applyFactCheck(
       uncheckedClaims.push(claim);
       continue;
     }
+    if (verdict.status === "not-a-claim") continue;
     const hit = verdict.url ? allowed.get(verdict.url) : undefined;
     if (verdict.status === "supported" && hit) {
       supported += 1;
@@ -229,8 +242,8 @@ export function applyFactCheck(
 export function factcheckUserPrompt(claims: readonly string[]): string {
   return [
     "Check these claims against the notes. Return JSON {claims: [{text, status, url}]}.",
-    "status is supported or unsupported. url must be a URL from the notes, or empty.",
-    "A claim is supported only when a note excerpt states it. Do not add facts.",
+    "status is supported, unsupported, or not-a-claim. url must be a URL from the notes, or empty.",
+    FACTCHECK_RULE,
     claims.map((claim, index) => `${index + 1}. ${claim}`).join("\n"),
   ].join("\n\n");
 }
@@ -261,7 +274,10 @@ export async function checkClaims(
   }
   try {
     const content = (await streamChat(model, [
-      systemMessage(notes, "Match claims to those notes. Do not add facts."),
+      systemMessage(
+        notes,
+        `Match claims to those notes. ${FACTCHECK_RULE}`,
+      ),
       { role: "user", content: factcheckUserPrompt(claims) },
     ], {
       temperature: 0,

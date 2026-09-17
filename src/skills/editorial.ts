@@ -54,7 +54,7 @@ export function styleUserPrompt(
     "The opening states one claim about that topic. Every paragraph advances that claim. Do not give each source its own paragraph.",
     "Cut praise, a repeated point, an unfinished sentence, and any sentence about the researchers, the working group, or the paper itself.",
     "Do not repeat the title. Do not use an abbreviation you have not written out.",
-    "You may shape the opening and the close only from facts already in the draft. Do not add facts.",
+    "You may shape the opening and the close only from facts already in the draft. Do not invent statistics, studies, quotes, or sources. You may keep argument and general knowledge already in the draft. Cut praise and repetition.",
     `It is ${current} words. Keep at least ${
       essayLengthFloor(wordCountTarget)
     } words. Cut praise and repetition, not the facts that make the length.`,
@@ -70,7 +70,7 @@ export function collapseUserPrompt(topic: string): string {
     "The draft is a source survey. That is rejected.",
     "Three or four paragraphs. The first states one claim. Later paragraphs use facts from more than one note.",
     "Do not give a note its own paragraph. Do not start a sentence with a definition.",
-    "Cut praise. Close on a fact already in the draft. Do not add facts. Return only the essay.",
+    "Cut praise. Close on a fact already in the draft. Do not invent statistics, studies, quotes, or sources. You may keep argument and general knowledge already in the draft. Return only the essay.",
   ].join("\n\n");
 }
 

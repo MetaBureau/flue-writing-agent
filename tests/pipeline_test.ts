@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "jsr:@std/assert@^1.0.19";
 import {
+  acceptedDrafts,
   acceptExpansion,
   acceptWovenEssay,
   assertEssayLength,
@@ -27,15 +28,19 @@ import {
   isAppendedDump,
   isProseExpansion,
   isSourceCollage,
+  longestDraft,
   mergeExtension,
   notesRecord,
   OUTLINE_MAX_TOKENS,
   outlineUserPrompt,
-  pickDraft,
+  pickSynthesizedText,
   publishedTitle,
   repeatsDraft,
   stageSystem,
   stripLeadingTitle,
+  SYNTHESIS_MAX_TOKENS,
+  synthesisTokens,
+  synthesisUserPrompt,
   weaveUserPrompt,
   wordCountFromTopic,
   wordsToAsk,
@@ -63,6 +68,7 @@ import {
   checkModelId,
   citableHits,
   factcheckRecord,
+  factcheckUserPrompt,
   markdownLink,
   splitClaims,
   uncheckedResult,
@@ -80,6 +86,9 @@ import {
   essayPiece,
   isEssayLength,
   notesPiece,
+  pieceRank,
+  synthesisPiece,
+  WRITE_STAGES,
 } from "../src/contract.ts";
 import { countWords, topicSlug } from "../src/main.ts";
 import {
@@ -102,14 +111,57 @@ import {
   sourceNotes,
 } from "../src/research.ts";
 
-Deno.test("pickDraft selects analytical draft for economist style", () => {
+Deno.test("acceptedDrafts keeps fulfilled drafts and throws if none succeed", () => {
+  const good: Draft = { model: "kept", content: "Enough words here to keep." };
+  assertEquals(
+    acceptedDrafts([
+      { status: "rejected", reason: new Error("fail") },
+      { status: "fulfilled", value: { model: "empty", content: "  " } },
+      { status: "fulfilled", value: good },
+    ]),
+    [good],
+  );
+  assertThrows(
+    () =>
+      acceptedDrafts([
+        { status: "rejected", reason: new Error("fail") },
+        { status: "fulfilled", value: { model: "empty", content: "" } },
+      ]),
+    Error,
+    "No drafts succeeded",
+  );
+});
+
+Deno.test("longestDraft prefers more words and keeps the first tie", () => {
   const drafts: Draft[] = [
-    { style: "conversational", content: "conversational body" },
-    { style: "professional", content: "professional body" },
-    { style: "analytical", content: "analytical body" },
+    { model: "short", content: "one two" },
+    { model: "long", content: "one two three four five" },
+    { model: "also-long", content: "six seven eight nine ten" },
   ];
-  const selected = pickDraft(drafts, "economist");
-  assertEquals(selected.content, "analytical body");
+  assertEquals(longestDraft(drafts).model, "long");
+  assertEquals(
+    longestDraft([
+      { model: "a", content: "one two three" },
+      { model: "b", content: "four five six" },
+    ]).model,
+    "a",
+  );
+  assertThrows(() => longestDraft([]), Error, "No drafts");
+});
+
+Deno.test("pickSynthesizedText uses the reply or the longest draft", () => {
+  const drafts: Draft[] = [
+    { model: "short", content: "one two" },
+    { model: "long", content: "one two three four five" },
+  ];
+  assertEquals(pickSynthesizedText("  Synthesized.  ", drafts), {
+    content: "Synthesized.",
+    fallback: false,
+  });
+  assertEquals(pickSynthesizedText("  ", drafts), {
+    content: "one two three four five",
+    fallback: true,
+  });
 });
 
 Deno.test("prompt interview asks one question and does not invent", () => {
@@ -177,17 +229,31 @@ Deno.test("form essay lengths default to 900", () => {
 Deno.test("piece files match the saved essay and notes names", () => {
   const slug = topicSlug("Write a 900 word essay about pet cats");
   assertEquals(essayPiece(slug, "# Title\n").filename, `${slug}.md`);
+  assertEquals(essayPiece(slug, "# Title\n").label, "Essay");
+  assertEquals(essayPiece(slug, "# Title\n", 469).label, "Essay · 469 words");
   assertEquals(notesPiece(slug, "notes\n").filename, `${slug}.notes.md`);
-  const draft = draftPiece(slug, "analytical", "Cats sleep.", true);
-  assertEquals(draft.id, "draft:analytical");
-  assertEquals(draft.filename, `${slug}.draft-analytical.md`);
-  assertStringIncludes(draft.label, "selected");
-  assertStringIncludes(draft.markdown, "# Analytical draft");
-  assertStringIncludes(draft.markdown, "Cats sleep.");
-  assertEquals(
-    draftPiece(slug, "professional", "Body.", false).label,
-    "Professional draft",
+  const draft = draftPiece(
+    slug,
+    "anthropic/claude-haiku-4-5",
+    "Cats sleep.",
+    "Claude Haiku 4.5",
   );
+  assertEquals(draft.id, "draft:claude-haiku-4-5");
+  assertStringIncludes(draft.filename, "draft-claude-haiku-4-5");
+  assertEquals(draft.label, "Claude Haiku 4.5");
+  assertStringIncludes(draft.markdown, "# Claude Haiku 4.5");
+  assertStringIncludes(draft.markdown, "Cats sleep.");
+  assertFalse(draft.label.toLowerCase().includes("selected"));
+  assertFalse(draft.markdown.toLowerCase().includes("selected"));
+  assertEquals(synthesisPiece(slug, "Body.").filename, `${slug}.synthesis.md`);
+  assertEquals(
+    WRITE_STAGES.map((stage) => stage.id),
+    ["research", "outline", "drafts", "synthesis", "extend", "style", "factcheck"],
+  );
+  assertEquals(pieceRank("notes"), 0);
+  assertEquals(pieceRank("draft:claude-haiku-4-5"), 1);
+  assertEquals(pieceRank("synthesis"), 2);
+  assertEquals(pieceRank("essay"), 3);
 });
 
 Deno.test("topicSlug keeps the first six words", () => {
@@ -208,8 +274,9 @@ Deno.test("outlineUserPrompt includes notes without OpenCall", () => {
   assertFalse(prompt.includes(notes));
   assertStringIncludes(prompt, "The essay is about: Flue");
   assertStringIncludes(prompt, "900-word essay");
+  assertStringIncludes(prompt, "Draw specific facts, figures, quotes, and named studies from the notes");
   assertStringIncludes(prompt, "one claim about that topic");
-  assertStringIncludes(prompt, "Do not invent a fact");
+  assertStringIncludes(prompt, "Do not invent a statistic, a study, a quote, or a source");
   assertStringIncludes(prompt, "Four sections at most");
   assertFalse(prompt.includes("OpenCall"));
   assertFalse(prompt.includes("thoughtful"));
@@ -217,7 +284,6 @@ Deno.test("outlineUserPrompt includes notes without OpenCall", () => {
 
 Deno.test("draft prompt stays in the notes and sets a floor", () => {
   const prompt = draftUserPrompt(
-    "Write in an analytical, data-focused tone",
     {
       title: "Flue",
       sections: ["Five calls"],
@@ -226,7 +292,12 @@ Deno.test("draft prompt stays in the notes and sets a floor", () => {
   );
   assertStringIncludes(prompt, "Write about 900 words");
   assertStringIncludes(prompt, "one claim about that topic");
-  assertStringIncludes(prompt, "only facts from the notes");
+  assertStringIncludes(
+    prompt,
+    "Notes are the source for specific facts, figures, quotes, and named studies",
+  );
+  assertStringIncludes(prompt, "Do not invent statistics, studies, quotes, or sources");
+  assertFalse(prompt.includes("Write in an analytical, data-focused tone"));
   assertStringIncludes(prompt, "Close on a fact you already used");
   assertStringIncludes(
     stageSystem("The pipeline is five model calls.", "instruction"),
@@ -241,7 +312,7 @@ Deno.test("style prompt keeps the length floor", () => {
     900,
     "elites and politics",
   );
-  assertStringIncludes(prompt, "Do not add facts");
+  assertStringIncludes(prompt, "Do not invent statistics, studies, quotes, or sources");
   assertStringIncludes(prompt, "one essay about: elites and politics");
   assertStringIncludes(prompt, "one claim about that topic");
   assertStringIncludes(prompt, "Cut praise");
@@ -258,7 +329,28 @@ Deno.test("weave prompt returns the full essay", () => {
   assertStringIncludes(prompt, "Return the full essay of about 900 words");
   assertStringIncludes(prompt, "until the essay reaches 900 words");
   assertStringIncludes(prompt, "Do not add a paragraph for each source");
+  assertStringIncludes(prompt, "Do not invent statistics, studies, quotes, or sources");
   assertStringIncludes(prompt, "Return only the essay");
+});
+
+Deno.test("synthesis prompt includes each draft and the target length", () => {
+  const prompt = synthesisUserPrompt("pet cats", {
+    title: "Pet cats",
+    sections: ["Opening", "Body", "Close"],
+    wordCountTarget: 900,
+  }, [
+    { model: "anthropic/claude-haiku-4-5", content: "Haiku draft body." },
+    { model: "mistralai/mistral-large-2512", content: "Mistral draft body." },
+    { model: "moonshotai/kimi-k2-0905", content: "Kimi draft body." },
+  ]);
+  assertStringIncludes(prompt, "Haiku draft body.");
+  assertStringIncludes(prompt, "Mistral draft body.");
+  assertStringIncludes(prompt, "Kimi draft body.");
+  assertStringIncludes(prompt, "Draft A:");
+  assertStringIncludes(prompt, "900");
+  assertFalse(prompt.includes("anthropic/claude-haiku-4-5"));
+  assertFalse(prompt.includes("mistralai/mistral-large-2512"));
+  assertFalse(prompt.includes("moonshotai/kimi-k2-0905"));
 });
 
 Deno.test("word count defaults to 900 unless the topic names a count", () => {
@@ -271,8 +363,12 @@ Deno.test("essay length floor is 85 percent of the request", () => {
   assertEquals(essayLengthFloor(DEFAULT_ESSAY_LENGTH), 765);
   assertEquals(
     bodyWordCount(
-      "# Title\n\nOne two three.\n\n## Sources\n\n- [A](https://a.example)",
+      "# Title\n\n3 words\n\nOne two three.\n\n## Sources\n\n- [A long listed source title](https://a.example/path)",
     ),
+    3,
+  );
+  assertEquals(
+    bodyWordCount("One two three.\n\n## Sources\n\n- [A](https://a.example)"),
     3,
   );
   assertThrows(
@@ -565,15 +661,15 @@ Deno.test("completion body caps reasoning tokens and records usage", () => {
     {
       role: "system",
       content:
-        "Notes, the only facts you may use:\nA fact.\n\nDraft:\nThe draft.",
-      cachedPrefix: "Notes, the only facts you may use:\nA fact.",
+        "Research notes:\nA fact.\n\nDraft:\nThe draft.",
+      cachedPrefix: "Research notes:\nA fact.",
     },
     { role: "user", content: "check" },
   ]);
   assertEquals(cached[0].content, [
     {
       type: "text",
-      text: "Notes, the only facts you may use:\nA fact.",
+      text: "Research notes:\nA fact.",
       cache_control: { type: "ephemeral" },
     },
     { type: "text", text: "Draft:\nThe draft." },
@@ -639,6 +735,13 @@ Deno.test("fact-check cites a note URL and flags an unsupported claim", () => {
   const claim = "Domestic cats in the United States number about 86.4 million.";
   const other = "The author keeps a white cat as a member of the household.";
   const text = `${claim} ${other}`;
+  const checkPrompt = factcheckUserPrompt([claim]);
+  assertStringIncludes(checkPrompt, "checkable specifics");
+  assertStringIncludes(checkPrompt, "not-a-claim");
+  assertStringIncludes(
+    checkPrompt,
+    "Mark argument, interpretation, examples, transitions, and widely known general knowledge as not-a-claim",
+  );
   assertEquals(splitClaims(text).length, 2);
   const checked = applyFactCheck(
     text,
@@ -657,6 +760,7 @@ Deno.test("fact-check cites a note URL and flags an unsupported claim", () => {
   assertFalse(checked.text.includes("[unsupported]"));
   assertEquals(checked.unsupportedClaims, [other]);
   assertStringIncludes(checked.text, "## Sources");
+  assertEquals(splitClaims(checked.text).length, 2);
   assertFalse(checked.text.includes("evil.example"));
   const twice = applyFactCheck(
     `${claim} ${claim}`,
@@ -720,6 +824,34 @@ Deno.test("fact-check cites a note URL and flags an unsupported claim", () => {
   assertStringIncludes(factcheckRecord(checked), other);
 });
 
+Deno.test("fact-check skips a not-a-claim verdict", () => {
+  const hits = [{
+    title: "Pet survey",
+    url: "https://example.com/cats",
+    content: "Domestic cats in the United States number about 86.4 million.",
+  }];
+  const claim = "Domestic cats in the United States number about 86.4 million.";
+  const argument =
+    "That presence is why a household often organizes itself around the cat.";
+  const parsed = verdictsFromContent(JSON.stringify({
+    claims: [
+      { text: claim, status: "supported", url: "https://example.com/cats" },
+      { text: argument, status: "not-a-claim", url: "" },
+    ],
+  }));
+  assertEquals(parsed[1]?.status, "not-a-claim");
+  const checked = applyFactCheck(
+    `${claim} ${argument}`,
+    parsed,
+    hits,
+  );
+  assertEquals(checked.supported, 1);
+  assertEquals(checked.unsupportedClaims, []);
+  assertEquals(checked.uncheckedClaims, []);
+  assertStringIncludes(checked.text, "[Pet survey](https://example.com/cats)");
+  assertFalse(factcheckRecord(checked).includes(argument));
+});
+
 Deno.test("unchecked fact-check is recorded in the notes and keeps the essay", async () => {
   const essay = "Domestic cats in the United States number about 86.4 million.";
   const skipped = await checkClaims(essay, [{
@@ -745,7 +877,8 @@ Deno.test("unchecked fact-check is recorded in the notes and keeps the essay", a
   const notes = notesRecord({
     notes: "A cat fact.",
     outlineModel: "mercury-2.5",
-    draftModel: "mercury-2.5",
+    draftModels: ["mercury-2.5"],
+    synthesisModel: "mercury-2.5",
     cost: "estimate $0.010",
     factcheck: record,
   });
@@ -839,7 +972,18 @@ Deno.test("essay markdown has one title and no style line", () => {
   assertEquals(stripLeadingTitle(body), "Cats are peculiar animals.");
   const essay = essayMarkdown("Essay on My Pet Cat", body);
   assertFalse(essay.includes("## Style:"));
-  assertEquals(essay.startsWith("# Essay on My Pet Cat\n\nCats"), true);
+  assertEquals(
+    essay.startsWith("# Essay on My Pet Cat\n\n4 words\n\nCats"),
+    true,
+  );
+  const sourced = essayMarkdown(
+    "Title",
+    "One two three.\n\n## Sources\n\n- [A long listed source title](https://a.example/path)",
+  );
+  assertStringIncludes(sourced, "3 words");
+  assertEquals(bodyWordCount(sourced), 3);
+  assertStringIncludes(sourced, "## Sources");
+  assertStringIncludes(sourced, "https://a.example/path");
   assertEquals(
     publishedTitle(
       "elites and politics",
@@ -880,10 +1024,14 @@ Deno.test("essay markdown has one title and no style line", () => {
   const notes = notesRecord({
     notes: "A cat fact.",
     outlineModel: "google/gemini-3.1-flash-lite",
-    draftModel: "google/gemini-3.1-flash-lite",
+    draftModels: ["google/gemini-3.1-flash-lite"],
+    synthesisModel: "google/gemini-3.1-flash-lite",
     cost: "estimate $0.010",
   });
-  assertStringIncludes(notes, "Model: google/gemini-3.1-flash-lite");
+  assertStringIncludes(
+    notes,
+    "Model: outline google/gemini-3.1-flash-lite; drafts google/gemini-3.1-flash-lite; synthesis google/gemini-3.1-flash-lite",
+  );
   assertStringIncludes(notes, "Cost: estimate $0.010");
   assertStringIncludes(notes, "A cat fact.");
 });
@@ -922,4 +1070,9 @@ Deno.test("picker label uses catalog price and does not claim default reasoning"
   assertEquals(keyListWarning(curated, new Set(["google/*"])).length > 0, true);
   assertEquals(keyListWarning(curated, undefined), "");
   assertEquals(OUTLINE_MAX_TOKENS, 4096);
+  assertEquals(SYNTHESIS_MAX_TOKENS, 65536);
+  assertEquals(synthesisTokens(900, true), 65536);
+  assertEquals(synthesisTokens(5000, true), 65536);
+  assertEquals(synthesisTokens(900, false), 4096);
+  assertEquals(synthesisTokens(5000, false), 8192);
 });

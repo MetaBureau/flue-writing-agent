@@ -5,7 +5,7 @@ import {
   type RunMeter,
   streamChat,
 } from "../complete.ts";
-import { DEFAULT_ESSAY_LENGTH, essayLengthFloor } from "../contract.ts";
+import { DEFAULT_ESSAY_LENGTH, essayLengthFloor, modelSlug } from "../contract.ts";
 
 export type SourceNotes = { readonly text: string; readonly topic?: string };
 export type EditorialStyle =
@@ -13,14 +13,6 @@ export type EditorialStyle =
   | "strunk-white"
   | "monocle"
   | "professional";
-export type DraftVoice = "conversational" | "professional" | "analytical";
-
-export const VOICE_FOR_STYLE: Record<EditorialStyle, DraftVoice> = {
-  economist: "analytical",
-  "strunk-white": "analytical",
-  monocle: "conversational",
-  professional: "professional",
-};
 
 export interface Outline {
   title: string;
@@ -35,8 +27,15 @@ export interface ModelConfig extends CompletionTarget {
 }
 
 export interface Draft {
-  style: DraftVoice;
+  model: string;
   content: string;
+}
+
+export interface Synthesis {
+  model: string;
+  content: string;
+  fallback: boolean;
+  source: "mercury" | "writer" | "longest-draft";
 }
 
 export const DEFAULT_WORD_COUNT = DEFAULT_ESSAY_LENGTH;
@@ -46,15 +45,39 @@ export const MAX_CONSECUTIVE_REJECTS = 3;
 export const EXTENSION_ASK_RATIO = 1.5;
 export const OUTLINE_MAX_TOKENS = 4096;
 export const DRAFT_MAX_TOKENS = 4096;
+export const SYNTHESIS_MAX_TOKENS = 65536;
 export const REPEAT_RATIO = 0.6;
 
 export function completionTokensForLength(words: number): number {
   return Math.min(8192, Math.max(DRAFT_MAX_TOKENS, Math.ceil(words * 2.5)));
 }
 
+export function synthesisTokens(words: number, mercury: boolean): number {
+  return mercury
+    ? SYNTHESIS_MAX_TOKENS
+    : completionTokensForLength(words);
+}
+
+const WORD_COUNT_LINE = /^\d+ words\.?\n+/;
+
+export function splitEssaySources(markdown: string): {
+  prose: string;
+  sources: string;
+} {
+  const stripped = stripLeadingTitle(markdown);
+  const match = stripped.match(/\n## Sources\s*\n/);
+  if (match?.index === undefined) {
+    return { prose: stripped.replace(WORD_COUNT_LINE, "").trim(), sources: "" };
+  }
+  return {
+    prose: stripped.slice(0, match.index).replace(WORD_COUNT_LINE, "").trim(),
+    sources: stripped.slice(match.index).trim(),
+  };
+}
+
 export function bodyWordCount(markdown: string): number {
-  const withoutSources = markdown.split(/\n## Sources\s*\n/)[0] ?? markdown;
-  return countWords(stripLeadingTitle(withoutSources));
+  const { prose } = splitEssaySources(markdown);
+  return countWords(prose.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"));
 }
 
 export function assertEssayLength(text: string, target: number): void {
@@ -210,7 +233,10 @@ export function publishedTitle(
 }
 
 export function essayMarkdown(title: string, body: string): string {
-  return `# ${title.trim()}\n\n${stripLeadingTitle(body)}\n`;
+  const { prose, sources } = splitEssaySources(body);
+  const words = bodyWordCount(prose);
+  const sourceBlock = sources ? `\n\n${sources}\n` : "\n";
+  return `# ${title.trim()}\n\n${words} words\n\n${prose}${sourceBlock}`;
 }
 
 export function finishEssay(
@@ -262,13 +288,13 @@ export function finishEssay(
 export function notesRecord(input: {
   notes: string;
   outlineModel: string;
-  draftModel: string;
+  draftModels: readonly string[];
+  synthesisModel: string;
   cost: string;
   factcheck?: string;
 }): string {
-  const model = input.outlineModel === input.draftModel
-    ? input.outlineModel
-    : `outline ${input.outlineModel}; drafts ${input.draftModel}`;
+  const model =
+    `outline ${input.outlineModel}; drafts ${input.draftModels.join(", ")}; synthesis ${input.synthesisModel}`;
   const findings = input.factcheck?.trim()
     ? `\n\n${input.factcheck.trim()}\n`
     : "\n";
@@ -400,8 +426,11 @@ function parseOutline(content: string, topic: string): Outline {
   }
 }
 
+export const NOTES_GROUNDING =
+  "Notes are the source for specific facts, figures, quotes, and named studies. You may add argument, interpretation, examples, transitions, and widely known general knowledge. Do not invent statistics, studies, quotes, or sources. Do not present a weak source such as a forum post or a TIL as research.";
+
 export function notesPrefix(notes: string): string {
-  return `Notes, the only facts you may use:\n${notes}`;
+  return `Research notes:\n${notes}`;
 }
 
 export function stageSystem(notes: string, instruction: string): string {
@@ -417,7 +446,7 @@ export function systemMessage(notes: string, instruction: string): ChatMessage {
 }
 
 export const OUTLINE_SYSTEM =
-  "Return a JSON outline for one essay. Use only facts in the notes. Do not invent a fact.";
+  "Return a JSON outline for one essay. Draw specific facts from the notes. Do not invent a statistic, a study, a quote, or a source.";
 
 export const OUTLINE_RESPONSE_FORMAT = {
   type: "json_schema",
@@ -443,35 +472,89 @@ export function outlineUserPrompt(
 ): string {
   return [
     `The essay is about: ${topic}.`,
-    `Outline a ${words}-word essay. The notes are the only facts.`,
+    `Outline a ${words}-word essay. Draw specific facts, figures, quotes, and named studies from the notes.`,
     "Return JSON: {title: string, sections: string[], wordCountTarget: number}",
     "The opening states one claim about that topic. Every section advances that claim. Four sections at most.",
-    "The opening and the close may only frame facts already in the notes. Do not invent a fact, a prediction, or a recommendation.",
+    "The opening and the close may frame the claim with argument and widely known general knowledge. Do not invent a statistic, a study, a quote, or a source.",
     "The notes are one set of facts, not a list of sections. Do not make a section for each source.",
     "Do not use a company self-description heading such as Who are we.",
   ].join("\n\n");
 }
 
-export const DRAFT_SYSTEM =
-  "Write one essay. The notes are the only facts. Do not add motives, rankings, praise, or predictions the notes do not contain.";
+export const DRAFT_SYSTEM = `Write one essay. ${NOTES_GROUNDING}`;
 
 export function draftUserPrompt(
-  instruction: string,
   outline: Pick<Outline, "title" | "sections" | "wordCountTarget">,
   topic = "",
 ): string {
   const sections = outline.sections.map((section) => `- ${section}`).join("\n");
   return [
     topic ? `The essay is about: ${topic}.` : "Write the essay.",
-    `${instruction}.`,
     `Title: ${outline.title}`,
     `Sections, in this order:\n${sections}`,
     "The notes are one set of facts, not a list of sections. The opening states one claim about that topic. Every paragraph advances that claim. Do not give each source its own paragraph.",
-    `Write about ${outline.wordCountTarget} words. Use only facts from the notes. Close on a fact you already used.`,
+    `Write about ${outline.wordCountTarget} words. ${NOTES_GROUNDING} Close on a fact you already used.`,
     "Do not paste source titles, URLs, or markdown links. Citations are added later.",
-    "Say each fact once. Write each fact in full sentences. Leave out notes that are not about the subject.",
-    "Do not add praise, predictions, or facts that are not in the notes.",
+    "Say each specific fact once. Write each fact in full sentences. Leave out notes that are not about the subject.",
   ].join("\n\n");
+}
+
+export const SYNTHESIS_SYSTEM =
+  `Write one essay from the drafts. ${NOTES_GROUNDING} Take the strongest claim, structure, paragraphs, and phrasing from each draft. Keep the best-supported specifics. Remove repetition. Return only the essay.`;
+
+export function synthesisUserPrompt(
+  topic: string,
+  outline: Outline,
+  drafts: readonly Draft[],
+): string {
+  const sections = outline.sections.map((section) => `- ${section}`).join("\n");
+  const labelled = drafts.map((draft, index) => {
+    const letter = String.fromCharCode(65 + index);
+    return `Draft ${letter}:\n${draft.content.trim()}`;
+  }).join("\n\n");
+  return [
+    `The essay is about: ${topic}.`,
+    `Title: ${outline.title}`,
+    `Sections, in this order:\n${sections}`,
+    `Write about ${outline.wordCountTarget} words.`,
+    "Take the strongest claim, structure, paragraphs, and phrasing from each draft. Keep the best-supported specifics. Remove repetition. Hit the word count. Return only the essay.",
+    labelled,
+  ].join("\n\n");
+}
+
+export function acceptedDrafts(
+  results: PromiseSettledResult<Draft>[],
+): Draft[] {
+  const drafts = results.flatMap((result) => {
+    if (result.status !== "fulfilled") return [];
+    if (!result.value.content.trim()) return [];
+    return [result.value];
+  });
+  if (drafts.length === 0) throw new Error("No drafts succeeded");
+  return drafts;
+}
+
+export function longestDraft(drafts: readonly Draft[]): Draft {
+  if (drafts.length === 0) throw new Error("No drafts");
+  let longest = drafts[0];
+  let words = countWords(longest.content);
+  for (const draft of drafts.slice(1)) {
+    const next = countWords(draft.content);
+    if (next > words) {
+      longest = draft;
+      words = next;
+    }
+  }
+  return longest;
+}
+
+export function pickSynthesizedText(
+  reply: string,
+  drafts: readonly Draft[],
+): { content: string; fallback: boolean } {
+  const content = reply.trim();
+  if (content) return { content, fallback: false };
+  return { content: longestDraft(drafts).content, fallback: true };
 }
 
 export function extensionUserPrompt(
@@ -484,7 +567,7 @@ export function extensionUserPrompt(
   return [
     `The draft is ${current} words. Write ${ask} more words so the piece reaches at least ${target}.`,
     "Expand facts already in the draft and in the source notes. Write the thin sections out in full sentences.",
-    "Do not add a new section. Do not add facts that are not in the notes. Do not repeat a paragraph already in the draft.",
+    "Do not add a new section. You may add argument and general knowledge. Do not invent statistics, studies, quotes, or sources. Do not repeat a paragraph already in the draft.",
     "Match the voice of the draft so far. Return only the new paragraphs.",
     `Source notes:\n${notes}`,
     `Draft so far:\n${draft}`,
@@ -502,7 +585,7 @@ export function weaveUserPrompt(
       countWords(draft)
     } words. Keep every fact already in the draft. Weave unused notes until the essay reaches ${target} words.`,
     "The notes are one set of facts, not a list of sections. Keep the opening claim. Weave unused facts into the paragraphs they belong to.",
-    "Do not add a paragraph for each source. Do not repeat a point. Do not add a fact that is not in the notes.",
+    "Do not add a paragraph for each source. Do not repeat a point. You may add argument and general knowledge. Do not invent statistics, studies, quotes, or sources.",
     "Do not paste source titles, URLs, or markdown links. End with a complete sentence. Return only the essay.",
   ].join("\n\n");
 }
@@ -609,60 +692,92 @@ export const generateOutline = async (
 export const generateDrafts = async (
   _ctx: unknown,
   outline: Outline,
-  model: ModelConfig,
+  models: readonly ModelConfig[],
   notes: SourceNotes,
   meter?: RunMeter,
 ): Promise<Draft[]> => {
-  if (!model.apiKey) {
-    console.warn(`${model.name} key not set, using stub drafts`);
-    return [
-      { style: "conversational", content: `Draft 1 for ${outline.title}` },
-      { style: "professional", content: `Draft 2 for ${outline.title}` },
-      { style: "analytical", content: `Draft 3 for ${outline.title}` },
-    ];
-  }
-
-  const styles: Array<{ name: DraftVoice; instruction: string }> = [
-    {
-      name: "conversational",
-      instruction: "Write in a friendly, conversational tone",
-    },
-    {
-      name: "professional",
-      instruction: "Write in a professional, business-appropriate tone",
-    },
-    {
-      name: "analytical",
-      instruction: "Write in an analytical, data-focused tone",
-    },
-  ];
-
-  const drafts: Draft[] = [];
-  for (const { name, instruction } of styles) {
+  if (models.length === 0) throw new Error("No draft models");
+  const facts = writerFacts(notes.text);
+  const prompt = draftUserPrompt(outline, notes.topic);
+  const results = await Promise.allSettled(models.map(async (model) => {
+    const id = model.modelId ?? model.name;
+    if (!model.apiKey) {
+      return { model: id, content: `Draft for ${outline.title}` };
+    }
     const content = (await streamChat(model, [
-      systemMessage(writerFacts(notes.text), DRAFT_SYSTEM),
-      {
-        role: "user",
-        content: draftUserPrompt(instruction, outline, notes.topic),
-      },
+      systemMessage(facts, DRAFT_SYSTEM),
+      { role: "user", content: prompt },
     ], {
       temperature: 0.3,
-      label: `draft:${name}`,
+      label: `draft:${modelSlug(id)}`,
       maxTokens: completionTokensForLength(outline.wordCountTarget),
       meter,
     })).content;
-    drafts.push({
-      style: name,
-      content: content || "Draft content placeholder",
-    });
+    if (!content.trim()) throw new Error("empty draft");
+    return { model: id, content };
+  }));
+  for (const [index, result] of results.entries()) {
+    if (result.status !== "rejected") continue;
+    const id = models[index].modelId ?? models[index].name;
+    const reason = result.reason instanceof Error
+      ? result.reason.message
+      : "draft failed";
+    console.log(`[draft:${modelSlug(id)}] ${reason}`);
   }
-
-  return drafts;
+  return acceptedDrafts(results);
 };
 
-export function pickDraft(drafts: Draft[], style: EditorialStyle): Draft {
-  const voice = VOICE_FOR_STYLE[style];
-  return drafts.find((draft) => draft.style === voice) ?? drafts[0];
+export async function synthesizeEssay(
+  outline: Outline,
+  drafts: readonly Draft[],
+  notes: SourceNotes,
+  mercury: ModelConfig,
+  writer: ModelConfig,
+  meter?: RunMeter,
+): Promise<Synthesis> {
+  const longest = longestDraft(drafts);
+  const fallback = (): Synthesis => ({
+    model: longest.model,
+    content: longest.content,
+    fallback: true,
+    source: "longest-draft",
+  });
+  const target = mercury.apiKey ? mercury : writer;
+  const source = mercury.apiKey ? "mercury" : "writer";
+  if (!target.apiKey) {
+    console.warn("[synthesis] no API key; using longest draft");
+    return fallback();
+  }
+  let reply = "";
+  try {
+    reply = (await streamChat(target, [
+      systemMessage(writerFacts(notes.text), SYNTHESIS_SYSTEM),
+      {
+        role: "user",
+        content: synthesisUserPrompt(notes.topic ?? notes.text, outline, drafts),
+      },
+    ], {
+      temperature: 0.3,
+      label: "synthesis",
+      maxTokens: synthesisTokens(outline.wordCountTarget, source === "mercury"),
+      meter,
+    })).content;
+  } catch (error) {
+    if (!(error instanceof CutOffReply)) throw error;
+    console.warn("[synthesis] cut off; using longest draft");
+    return fallback();
+  }
+  const picked = pickSynthesizedText(reply, drafts);
+  if (picked.fallback) {
+    console.warn("[synthesis] empty reply; using longest draft");
+    return fallback();
+  }
+  return {
+    model: target.modelId ?? target.name,
+    content: picked.content,
+    fallback: false,
+    source,
+  };
 }
 
 export async function extendDraft(

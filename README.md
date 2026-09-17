@@ -34,7 +34,7 @@ Options:
   --verbose           Show detailed progress
   --dry-run           Show config without running
 
-Length defaults to 900 words. Put a count in the topic (`200 words`) to override. The saved essay must be at least 85% of that count.
+Length defaults to 900 words. Put a count in the topic (`200 words`) to override. The saved essay must be at least 85% of that count, excluding the Sources list. The body word count is written under the title.
 ```
 
 **Examples:**
@@ -83,17 +83,17 @@ src/
 ├── main.ts          # CLI, then write the essay to output/
 ├── complete.ts      # Streaming chat completion
 ├── research.ts      # Tavily search, excerpts only, no synthesized answer
-├── providers.ts     # Provider registry
+├── providers.ts     # Provider registry and DRAFT_MODELS
 ├── agents/
-│   └── write.ts     # Outline, three drafts, style pick
+│   └── write.ts     # Outline, parallel drafts, synthesis, extend
 └── skills/
     └── editorial.ts # Style pass
 ```
 
 ## Features
 
-- **Topic notes**: The topic string plus Tavily page excerpts. Prompts forbid extra sections, and an expansion is rejected if it is not about its note
-- **Writer and checker**: The form and `--model` run the writing stages on one model. Fact-check uses `CHECK_MODEL` or the form's checker, default `openai/gpt-4.1`, through `HAIMAKER_API_KEY`. Without that key, fact-check is skipped and the essay is still saved. Unsupported claims stay in the notes file, not the essay
+- **Topic notes**: The topic string plus Tavily page excerpts. Prompts treat notes as the source for specifics; argument and general knowledge are allowed. Do not invent statistics, studies, quotes, or sources
+- **Writer and checker**: The form and `--model` run outline, extend, and style. Three HaiMaker models draft in parallel. Mercury 2.5 synthesizes. Fact-check uses `CHECK_MODEL` or the form's checker, default `openai/gpt-4.1`, through `HAIMAKER_API_KEY`. Without that key, fact-check is skipped and the essay is still saved. Unsupported claims stay in the notes file; argument and general knowledge are `not-a-claim` and are not listed
 - **Style Enforcement**: Apply editorial rules (Economist, Strunk & White, Monocle, Professional)
 - **Provider Abstraction**: Unified interface for any OpenAI-compatible API (HaiMaker, Mercury)
 - **Output Formatting**: Markdown, JSON, or plain text
@@ -104,12 +104,12 @@ src/
 1. **Research**: Tavily search for page excerpts. No synthesized answer. If the call fails, continue with the topic only
 2. **Notes**: The topic string plus those excerpts
 3. **Outline**: Generate a structured outline with the chosen model
-4. **Draft**: Write conversational, professional, and analytical drafts
-5. **Select**: Keep the draft voice that matches `--style`
+4. **Draft**: Write three HaiMaker drafts in parallel (Claude Haiku 4.5, Mistral Large 2512, Kimi K2 0905), or one writer draft if there is no HaiMaker key
+5. **Synthesis**: Mercury 2.5 merges the drafts, or the writer if there is no Mercury key, or the longest draft if synthesis is empty. A longest-draft fallback is a warning
 6. **Extend**: Add unused on-topic facts from notes that are not about the source page. Stop when those notes are gone, not by looping until the word floor
 7. **Style pass**: Rewrite the extended draft into one essay. Cut praise, repetition, ads, and biographies. Keep names and numbers already in the draft. Do not keep a paragraph per source
-8. **Fact-check**: Match claims to note URLs with a different model when one is configured. Cite supported claims. Flag unsupported claims. Do not cut them
-9. **Save**: Print the essay and write `output/<slug>.md` plus `output/<slug>.notes.md` (notes, model, estimate). No `## Style:` line in the essay
+8. **Fact-check**: Match checkable specifics to note URLs with a different model when one is configured. Cite supported claims. Flag unsupported claims. Skip argument and general knowledge (`not-a-claim`). Do not cut them
+9. **Save**: Print the essay and write `output/<slug>.md` plus `output/<slug>.notes.md` (notes, models, estimate). No `## Style:` line in the essay
 
 ## Security
 

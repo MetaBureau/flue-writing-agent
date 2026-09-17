@@ -7,11 +7,11 @@ pipeline, format output, write `output/<slug>.md`.
 
 ## Ownership
 
-- `workflow.ts` — stage events for the form. Research, outline, drafts, extend,
-  style, fact-check, then piece events for notes, each draft, and the essay,
-  the essay markdown, and a notes sidecar.
-- `factcheck.ts` — match claims to note URLs, cite supported claims, and record
-  unsupported or unchecked claims in the notes file
+- `workflow.ts` — stage events for the form. Research, outline, drafts, synthesis,
+  extend, style, fact-check, then piece events for notes, each draft, synthesis,
+  and the essay, the essay markdown, and a notes sidecar.
+- `factcheck.ts` — match claims to note URLs, cite supported claims, skip
+  `not-a-claim`, and record unsupported or unchecked claims in the notes file
 - `providers.ts` — HaiMaker and Mercury registry, each provider's curated
   `models` ids for the picker, and env resolution
 - `catalog.ts` — public model hub parse, picker labels, and exact key model-list
@@ -50,9 +50,17 @@ and style.
   rate-limit error saves the essay marked unchecked, then reports the error. A
   cut-off or empty verdict list saves without citations. Each source URL is
   linked once, in a Sources section. A link is not inserted into a sentence.
-  Unsupported and unchecked claims stay out of the essay
+  Unsupported and unchecked claims stay in the essay and are listed in the
+  notes file. Argument, interpretation, examples, transitions, and widely known
+  general knowledge are `not-a-claim` and are omitted from those lists. The
+  Sources list is not part of the body word count or the
+  length floor
 - `finish_reason: "length"` throws `CutOffReply`. Callers must not use that
-  content. Outline and drafts let it surface. Style and extend discard it.
+  content. Outline lets it surface. A cut-off draft is dropped. The drafts
+  stage fails only when none succeed. Synthesis uses `SYNTHESIS_MAX_TOKENS`
+  (65,536) for Mercury so reasoning does not eat the merge cap, and
+  `completionTokensForLength` when the writer merges. A longest-draft fallback
+  is a warning, not a normal finish. Style and extend discard a cut-off.
   Fact-check catches only `CutOffReply`
 - Do not send `reasoning_effort` unless the catalog lists it and the value is
   `low`, `medium`, or `high`. Omit it by default
@@ -68,7 +76,9 @@ and style.
   only. `gatherResearch` returns the hits, not only formatted text
 - Notes start as `topic + research.text`. Page-description paragraphs and
   sources about how to write an essay are dropped before the outline. Those
-  filtered notes are the only facts later stages may use
+  filtered notes are the source for specific facts, figures, quotes, and named
+  studies. Later stages may add argument and widely known general knowledge.
+  Do not invent statistics, studies, quotes, or sources
 - Extend weaves until the essay reaches `wordCountTarget` or hits the call cap.
   Each weave replaces the draft with the full essay, or is rejected. A reply
   that copies the draft and appends notes is rejected. A style rewrite must
@@ -79,12 +89,16 @@ and style.
 - Atomic write: `output/<slug>.md.tmp` then rename. The slug is the topic, not
   the outline title. The same slug gets `output/<slug>.notes.md` with the notes,
   model ids, estimate, and fact-check findings
-- Form `words` is an `ESSAY_LENGTHS` count. It sets `outline.wordCountTarget` and wins over a count in the topic. The CLI still uses `wordCountFromTopic`. The saved body must be at least `essayLengthFloor` of that count
+- Form `words` is an `ESSAY_LENGTHS` count. It sets `outline.wordCountTarget` and wins over a count in the topic. The CLI still uses `wordCountFromTopic`. The saved body must be at least `essayLengthFloor` of that count. `bodyWordCount` excludes the title, the `{n} words` line, and the Sources list. The saved essay writes that count under the title.
+- Drafts use `DRAFT_MODELS` on HaiMaker when that key is set, otherwise the writer. Synthesis pins `mercury-2.5`. Empty drafts fail the drafts stage
 - The form interview uses the writer model. It asks one question at a time, including when the topic is empty, stops after five answers, and does not invent facts. A reply that describes how to write an essay is discarded. The topic it fills is still the only brief the pipeline receives
 - The form stream yields a notes piece after research, one piece per draft
-  after drafts, then replaces notes with the sidecar text and yields the essay
-  piece when those files are saved. Download names are `<slug>.md`,
-  `<slug>.notes.md`, and `<slug>.draft-<voice>.md`
+  after drafts, a synthesis piece after synthesis, then replaces notes with the
+  sidecar text and yields the essay piece when those files are saved. A
+  longest-draft synthesis fallback yields stage status `warning`. Download
+  names are `<slug>.md`, `<slug>.notes.md`, `<slug>.draft-<model-slug>.md`, and
+  `<slug>.synthesis.md`. `notesRecord` lists the outline model, draft model ids,
+  and synthesis model
 
 ## Work Guidance
 
@@ -107,7 +121,7 @@ tests.
 
 ## Child DOX Index
 
-- `src/agents/AGENTS.md` — Flue `Writer` agent, plus the older
-  outline/draft/extend script
+- `src/agents/AGENTS.md` — Flue `Writer` agent, plus outline, parallel drafts,
+  synthesis, and extend
 - `skills/AGENTS.md` — editorial style pass that may cut repetition and must not
-  invent
+  invent statistics, studies, quotes, or sources

@@ -65,5 +65,5 @@ export function styleFromData(
 export function styleSystemPrompt(style: StyleRules): string {
   return `Apply ${style.name} style rules: ${
     style.rules.join(", ")
-  }. Transformation goal: ${style.transformation}. Example sentence: ${style.sample} Do not add facts.`;
+  }. Transformation goal: ${style.transformation}. Example sentence: ${style.sample} Do not invent statistics, studies, quotes, or sources. You may keep argument and general knowledge already in the draft. Cut praise and repetition.`;
 }

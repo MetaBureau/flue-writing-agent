@@ -1,5 +1,6 @@
 import {
   assertEssayLength,
+  bodyWordCount,
   countWords,
   draftingNotes,
   essayMarkdown,
@@ -8,9 +9,9 @@ import {
   generateDrafts,
   generateOutline,
   notesRecord,
-  pickDraft,
   publishedTitle,
   stripLeadingTitle,
+  synthesizeEssay,
 } from "./agents/write.ts";
 import type { EditorialStyle } from "./agents/write.ts";
 import { loadModelHub, pricesFromCatalog } from "./catalog.ts";
@@ -29,12 +30,15 @@ import {
   essayPiece,
   notesPiece,
   type StageId,
+  synthesisPiece,
   type WriteEvent,
 } from "./contract.ts";
 import { topicSlug, writeOutputFile } from "./main.ts";
 import { gatherResearch, supplementResearch } from "./research.ts";
 import { applyEditorialStyle } from "./skills/editorial.ts";
 import {
+  DRAFT_MODELS,
+  modelLabel,
   providerKeyProblem,
   PROVIDERS,
   reloadEnv,
@@ -130,35 +134,75 @@ export async function* writeStages(input: {
     };
 
     stage = "drafts";
+    const drafters = resolveProvider("haimaker", "fast").apiKey
+      ? DRAFT_MODELS.map((id) => resolveProvider("haimaker", "fast", id))
+      : [fast];
     yield {
       type: "stage",
       id: "drafts",
       status: "active",
-      detail: `${fast.name} · ${fast.modelId}`,
+      detail: drafters.map((model) => model.modelId).join(", "),
     };
-    const drafts = await generateDrafts({}, outline, fast, notes, meter);
-    const selected = pickDraft(drafts, input.style);
+    const drafts = await generateDrafts({}, outline, drafters, notes, meter);
     for (const draft of drafts) {
       yield {
         type: "piece",
         piece: draftPiece(
           slug,
-          draft.style,
+          draft.model,
           draft.content,
-          draft.style === selected.style,
+          modelLabel(draft.model),
         ),
       };
     }
+    const draftIds = drafts.map((draft) => draft.model).join(", ");
     yield {
       type: "stage",
       id: "drafts",
       status: "done",
-      detail: `${selected.style} · ${cost()}`,
+      detail: drafts.length < drafters.length
+        ? `${drafts.length} succeeded · ${draftIds} · ${cost()}`
+        : `${draftIds} · ${cost()}`,
+    };
+
+    stage = "synthesis";
+    const mercury = resolveProvider("mercury", "fast", "mercury-2.5");
+    yield {
+      type: "stage",
+      id: "synthesis",
+      status: "active",
+      detail: mercury.apiKey
+        ? "Mercury · mercury-2.5"
+        : `no Mercury key; ${fast.name} · ${fast.modelId}`,
+    };
+    const synthesis = await synthesizeEssay(
+      outline,
+      drafts,
+      notes,
+      mercury,
+      fast,
+      meter,
+    );
+    yield {
+      type: "piece",
+      piece: synthesisPiece(slug, synthesis.content),
+    };
+    const fallbackNote = synthesis.fallback
+      ? "fell back to longest draft · "
+      : "";
+    yield {
+      type: "stage",
+      id: "synthesis",
+      status: synthesis.fallback ? "warning" : "done",
+      detail:
+        `${fallbackNote}${synthesis.source} · ${synthesis.model} · ${
+          countWords(synthesis.content)
+        } words · ${cost()}`,
     };
 
     stage = "extend";
     yield { type: "stage", id: "extend", status: "active" };
-    const draft = stripLeadingTitle(selected.content);
+    const draft = stripLeadingTitle(synthesis.content);
     let extended = await extendDraft(
       draft,
       notes.text,
@@ -242,13 +286,18 @@ export async function* writeStages(input: {
       const notesMarkdown = notesRecord({
         notes: notes.text,
         outlineModel: reasoning.modelId ?? reasoning.name,
-        draftModel: fast.modelId ?? fast.name,
+        draftModels: drafts.map((item) => item.model),
+        synthesisModel: synthesis.model,
         cost: cost(),
         factcheck: factcheckRecord(checked),
       });
       await writeOutputFile(`output/${slug}.md`, markdown);
       await writeOutputFile(`output/${slug}.notes.md`, notesMarkdown);
-      return { markdown, notesMarkdown };
+      return {
+        markdown,
+        notesMarkdown,
+        words: bodyWordCount(markdown),
+      };
     };
     let checked: Awaited<ReturnType<typeof checkClaims>>;
     try {
@@ -268,7 +317,10 @@ export async function* writeStages(input: {
       );
       const detail =
         `${message} · saved unchecked · ${checker.modelId} · ${cost()}`;
-      yield { type: "piece", piece: essayPiece(slug, saved.markdown) };
+      yield {
+        type: "piece",
+        piece: essayPiece(slug, saved.markdown, saved.words),
+      };
       yield { type: "piece", piece: notesPiece(slug, saved.notesMarkdown) };
       yield {
         type: "essay",
@@ -288,7 +340,10 @@ export async function* writeStages(input: {
       status: "done",
       detail: `${checked.detail} · ${checker.modelId}${note} · ${cost()}`,
     };
-    yield { type: "piece", piece: essayPiece(slug, saved.markdown) };
+    yield {
+      type: "piece",
+      piece: essayPiece(slug, saved.markdown, saved.words),
+    };
     yield { type: "piece", piece: notesPiece(slug, saved.notesMarkdown) };
     yield { type: "essay", markdown: saved.markdown, filename: `${slug}.md` };
   } catch (error) {

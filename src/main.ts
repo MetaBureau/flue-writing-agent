@@ -1,6 +1,7 @@
 /// <reference lib="deno.ns" />
 import {
   assertEssayLength,
+  bodyWordCount,
   countWords,
   draftingNotes,
   essayMarkdown,
@@ -9,9 +10,9 @@ import {
   generateDrafts,
   generateOutline,
   notesRecord,
-  pickDraft,
   publishedTitle,
   stripLeadingTitle,
+  synthesizeEssay,
   wordCountFromTopic,
 } from "./agents/write.ts";
 import { loadModelHub, pricesFromCatalog } from "./catalog.ts";
@@ -25,8 +26,14 @@ import {
 import { formatRun, RunMeter } from "./complete.ts";
 import { applyEditorialStyle } from "./skills/editorial.ts";
 import { gatherResearch, supplementResearch } from "./research.ts";
-import { isProviderModel, PROVIDERS, resolveProvider } from "./providers.ts";
-import { essayLengthFloor } from "./contract.ts";
+import {
+  DRAFT_MODELS,
+  isProviderModel,
+  modelLabel,
+  PROVIDERS,
+  resolveProvider,
+} from "./providers.ts";
+import { essayLengthFloor, modelSlug } from "./contract.ts";
 
 interface Args {
   topic: string;
@@ -138,6 +145,7 @@ function formatOutput(args: Args, content: string, title = args.topic) {
         topic: args.topic,
         style: args.style,
         content: body,
+        wordCount: bodyWordCount(body),
         generatedAt: new Date().toISOString(),
       },
       null,
@@ -249,21 +257,53 @@ async function runWritingWorkflow(args: Args) {
     };
     console.log(cost());
 
-    log(args, "drafts", `Creating variations with ${fastProvider.name}`);
+    log(args, "drafts", `Creating drafts`);
+    const drafters = resolveProvider("haimaker", "fast").apiKey
+      ? DRAFT_MODELS.map((id) => resolveProvider("haimaker", "fast", id))
+      : [fastProvider];
     const drafts = await generateDrafts(
       {},
       outline,
-      fastProvider,
+      drafters,
       notes,
       meter,
     );
+    for (const draft of drafts) {
+      console.log(
+        `[draft:${modelSlug(draft.model)}] ${modelLabel(draft.model)} · ${
+          countWords(draft.content)
+        } words`,
+      );
+    }
     console.log(cost());
 
-    log(args, "selection", "Choosing draft by style voice");
-    const selected = pickDraft(drafts, args.style);
-    const draft = stripLeadingTitle(selected.content);
+    const mercury = resolveProvider("mercury", "fast", "mercury-2.5");
+    log(
+      args,
+      "synthesis",
+      mercury.apiKey
+        ? "Mercury · mercury-2.5"
+        : `no Mercury key; ${fastProvider.name} · ${fastProvider.modelId}`,
+    );
+    const synthesis = await synthesizeEssay(
+      outline,
+      drafts,
+      notes,
+      mercury,
+      fastProvider,
+      meter,
+    );
+    if (synthesis.fallback) {
+      console.warn("[synthesis] fell back to longest draft");
+    }
     console.log(
-      `[draft:${selected.style}] ${countWords(draft)} words before extend`,
+      `[synthesis] ${synthesis.source} · ${synthesis.model} · ${
+        countWords(synthesis.content)
+      } words`,
+    );
+    const draft = stripLeadingTitle(synthesis.content);
+    console.log(
+      `[draft] ${countWords(draft)} words before extend`,
     );
 
     log(args, "extend", "Weaving unused facts into the essay");
@@ -333,7 +373,8 @@ async function runWritingWorkflow(args: Args) {
           notesRecord({
             notes: notes.text,
             outlineModel: reasoningProvider.modelId ?? reasoningProvider.name,
-            draftModel: fastProvider.modelId ?? fastProvider.name,
+            draftModels: drafts.map((item) => item.model),
+            synthesisModel: synthesis.model,
             cost: cost(),
             factcheck: findings,
           }),
@@ -361,7 +402,7 @@ async function runWritingWorkflow(args: Args) {
     console.log(`[factcheck] ${checked.detail}`);
     assertEssayLength(checked.text, outline.wordCountTarget);
 
-    console.log(`Words: ${countWords(checked.text)}`);
+    console.log(`Words: ${bodyWordCount(checked.text)}`);
 
     const formatted = formatOutput(args, checked.text, title);
     await save(checked.text, factcheckRecord(checked));
