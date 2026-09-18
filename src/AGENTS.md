@@ -92,14 +92,17 @@ and style catalogs.
   report count as one). Block mill domains, content farms, and Facebook,
   Twitter, Reddit, Instagram, and TikTok. Extract `extractLimitFor(words)` hits
   in full (`TAVILY_EXTRACT_URL`). HTTP or network failure continues with the topic
-  only. Extract HTTP failure or empty extract uses search snippets so notes
+  only and stores Tavily's status and error body on the job (`researchError`).
+  Do not swallow a 432 key usage cap as 0 sources. Extract HTTP failure or empty extract uses search snippets so notes
   are not blank after a hit. Research is optional on the Writer except when
   `researchRequired`: architecture or implementation, or an explain-the-system
   brief. When it
-  runs, reach `noteFloor` before planning: 6 notes for
+  runs, re-query toward `noteFloor`: 6 notes for
   500–1000 words, 8 through 2000, 10 above. Below the floor, `supplementResearch`
   re-queries the search pair, then a probe plan's gap list. Still below the
-  floor, `research` does not plan; it returns `researchFloorMessage`.
+  floor, `research` still plans and `draft` still writes from the brief.
+  `researchFloorMessage` is a warning. A hit is relevant if it names any
+  distinctive subject word.
   Encyclopaedias and live blogs
   count toward the floor but cannot be a section's only support
 - Structured notes keep id, URL, author, outlet, date, stance, and claims with

@@ -19,6 +19,6 @@ The run needs `.env` in the repo (`HAIMAKER_API_KEY`, optional `TAVILY_API_KEY`)
 
 The Writer sends the draft to Gemini 3.5 Flash for an editorial assessment. If the critic names passages, the Writer rewrites those passages in place, critiques once more, then saves. The critic sidecar is the assessment. Do not send the file out for a second review.
 
-When it finishes, read `output/<slug>.md`. If that name already existed, the new essay is `output/<slug>-2.md` (then `-3`, and so on). That file is the essay. The same text is stored in Deno KV. If the command fails, still read that `.md` when it exists, then report the error. If the file is missing, read the command stderr and report the error. Do not edit `output/` by hand.
+When it finishes, read `output/<slug>.md`. If that name already existed, the new essay is `output/<slug>-2.md` (then `-3`, and so on). That file is the essay. The same text is stored in Deno KV. If the command fails, still read that `.md` when it exists, then report the error. If the file is missing, read the command stderr and the `.notes.md` / `.job.json` sidecar. A Tavily HTTP 432 is a key usage cap, not "0 sources". Do not edit `output/` by hand.
 
 Do not use `src/workflow.ts`. Do not call Tavily yourself. Do not open the Fresh form unless the user asked for the UI (`deno task dev` on port 5175).

@@ -21,7 +21,9 @@ Deterministic checks for pipeline helpers and prompt contracts. No live model or
   plan bound is leftover and fails advance even when the critic JSON would
   pass; a matching bound, or a plan that named none, is clean; a menu of
   policies is leftover; `leftoverSaveError` names that leftover; research
-  below `noteFloor` returns `researchFloorMessage` and does not plan; a
+  below `noteFloor` returns `researchFloorMessage` and still plans; a
+  comparison query keeps a page that names one product;
+  `tavilyFailure` keeps a 432 key usage limit; a
   floor or plan-bound error string is not a recoverable essay; architecture
   or implementation briefs `researchRequired`, amusement briefs do not;
   `RunMeter.from` restores a snapshot; a run abort cancels `runFetchSignal`;

@@ -25,7 +25,8 @@ Fresh UI on Deno (dev port 5175, host Deno Deploy). Interview, then write.
   notes/plan/draft/critic when those fields exist. Stream `cancel` and
   `ctx.req.signal` abort the Flue run. A cancelled run is a clean close, not a
   writer-failed event, and does not recover-save an essay. Skipped research is a
-  warning. Then `{ type: "essay", markdown, filename }` using the saved slug,
+  warning. A Tavily HTTP failure (`job.researchError`) is a research warning
+  with that reason, not a silent 0 notes. Then `{ type: "essay", markdown, filename }` using the saved slug,
   which may be `<slug>-2` when the first path is taken
 - `/api/prompt` is unchanged: one question at a time, at most five answers
 

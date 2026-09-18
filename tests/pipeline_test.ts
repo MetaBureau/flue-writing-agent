@@ -130,11 +130,13 @@ import {
   mergeNotes,
   noteFloor,
   researchFloorMessage,
+  tavilyFailure,
   outletMatchesDomain,
   relevantToQuery,
   researchBudget,
   samePublication,
   searchQuery,
+  subjectWords,
   sourceNotes,
   sourceNotesFromUnknown,
   titleKey,
@@ -599,6 +601,56 @@ Deno.test("research drops a hit that does not name the subject", () => {
   };
   assertEquals(relevantToQuery(query, docs), true);
   assertEquals(relevantToQuery(query, ad), false);
+});
+
+Deno.test("a comparison query keeps a page about one named product", () => {
+  const query =
+    "Flue sqlite Deno Deploy Postgres Cloudflare D1 architecture implementation";
+  const postgres = {
+    title: "PostgreSQL documentation",
+    url: "https://www.postgresql.org/docs/current/",
+    content:
+      "Postgres is a relational database. This page is long enough to count as a note for the writer today.",
+  };
+  const d1 = {
+    title: "Cloudflare D1",
+    url: "https://developers.cloudflare.com/d1/",
+    content:
+      "D1 is Cloudflare SQL for Workers. This page is long enough to count as a note for the writer today.",
+  };
+  const ad = {
+    title: "Applied AI Bootcamp",
+    url: "https://example.com/bootcamp",
+    content:
+      "The bootcamp runs on Saturdays in Colombo and costs a fixed fee. Seats remain open for professionals who want applied skills.",
+  };
+  assertEquals(subjectWords(query).includes("d1"), true);
+  assertEquals(relevantToQuery(query, postgres), true);
+  assertEquals(relevantToQuery(query, d1), true);
+  assertEquals(relevantToQuery(query, ad), false);
+});
+
+Deno.test("Tavily HTTP errors keep the key usage reason", () => {
+  assertEquals(
+    tavilyFailure(
+      432,
+      JSON.stringify({
+        detail: {
+          error:
+            "This request exceeds this API key's set usage limit. You can increase its limit on the Tavily dashboard.",
+        },
+      }),
+    ),
+    "Tavily HTTP 432: this API key hit its usage limit: This request exceeds this API key's set usage limit. You can increase its limit on the Tavily dashboard.",
+  );
+  assertEquals(
+    tavilyFailure(429, ""),
+    "Tavily HTTP 429: rate limited",
+  );
+  assertEquals(
+    tavilyFailure(401, '{"error":"Invalid API key"}'),
+    "Tavily HTTP 401: the API key was rejected: Invalid API key",
+  );
 });
 
 Deno.test("facebook posts, content farms, and title mirrors are dropped", () => {
@@ -1136,7 +1188,13 @@ Deno.test("cleanup is checked before save, and over-length is an error", () => {
   assertEquals(recoverableEssay("Saved output/topic.md"), undefined);
   assertEquals(
     recoverableEssay(
-      "Research is below the source floor (0/8 notes). Do not plan or draft from this notebook.",
+      "Research is below the source floor (0/8 notes). Draft from the brief. Do not invent statistics, studies, quotes, or sources.",
+    ),
+    undefined,
+  );
+  assertEquals(
+    recoverableEssay(
+      "Tavily HTTP 432: this API key hit its usage limit: This request exceeds this API key's set usage limit.",
     ),
     undefined,
   );

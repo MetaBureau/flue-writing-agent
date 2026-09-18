@@ -151,6 +151,7 @@ export type WriterJob = {
   target: number;
   critiqueCount?: number;
   researched?: boolean;
+  researchError?: string;
   usage?: Record<string, TokenUsage>;
 };
 
@@ -212,16 +213,11 @@ async function stampCost(job: WriterJob, meter: RunMeter): Promise<void> {
   job.cost = formatRun(meter, await loadPrices());
 }
 
-function researchBlocked(job: WriterJob): string | undefined {
-  if (!job.researched) return undefined;
-  return researchFloorMessage(job.notes.length, job.target);
-}
-
 function researchNeeded(job: WriterJob): string | undefined {
   if (researchRequired(job.brief) && !job.researched) {
     return "Call research first. This brief needs checkable evidence.";
   }
-  return researchBlocked(job);
+  return undefined;
 }
 
 function openCritiqueIssues(job: WriterJob) {
@@ -380,10 +376,14 @@ async function runResearch(data: WriterData): Promise<string> {
     }
   }
   const blocked = researchFloorMessage(notes.length, words);
+  const notebook = [
+    research.error,
+    formatAttributedNotes(notes) || "No sourced notes.",
+  ].filter(Boolean).join("\n\n");
   const job: WriterJob = {
     slug: essayStem(outputPath),
     markdown: "",
-    notesMarkdown: formatAttributedNotes(notes) || "No sourced notes.",
+    notesMarkdown: notebook,
     notes,
     articles: research.articles,
     brief,
@@ -401,10 +401,10 @@ async function runResearch(data: WriterData): Promise<string> {
     cost: "flue run",
     target: words,
     researched: true,
+    researchError: research.error,
   };
   await stampCost(job, meter);
   await writeJob(outputPath, job);
-  if (blocked) return blocked;
   let plan = await planEssay(
     brief,
     notes,
@@ -419,11 +419,13 @@ async function runResearch(data: WriterData): Promise<string> {
   job.plan = { ...plan, claim: brief.claim || plan.claim };
   await stampCost(job, meter);
   await writeJob(outputPath, job);
-  return [
+  const body = [
     briefSidecar(job.brief),
     formatPlan(job.plan),
     job.notesMarkdown,
   ].join("\n\n");
+  const notices = [research.error, blocked].filter(Boolean).join("\n\n");
+  return notices ? `${notices}\n\n${body}` : body;
 }
 
 async function runDraft(data: WriterData): Promise<string> {
@@ -575,7 +577,10 @@ export async function persistWriterEssay(
     job.cost = formatRun(RunMeter.from(job.usage), await loadPrices());
   }
   job.notesMarkdown = notesRecord({
-    notes: formatAttributedNotes(job.notes) || "No sourced notes.",
+    notes: [
+      job.researchError,
+      formatAttributedNotes(job.notes) || "No sourced notes.",
+    ].filter(Boolean).join("\n\n"),
     writerModel: writerModel(data).modelId ?? "writer",
     cost: job.cost,
     brief: briefSidecar(job.brief),
@@ -612,7 +617,6 @@ async function runSave(
   if (!(job.draft ?? "").trim()) {
     const drafted = await runDraft(data);
     if (
-      drafted.startsWith("Research is below") ||
       drafted.startsWith("Call research first") ||
       drafted === "No topic."
     ) {
@@ -667,7 +671,7 @@ export function Writer() {
   useTool({
     name: "research",
     description:
-      "Search and note sources when the brief needs checkable evidence, including architecture or implementation of a named system. Optional for humour, opinion, or known practice. If it reports the source floor, stop.",
+      "Search and note sources when the brief needs checkable evidence, including architecture or implementation of a named system. Optional for humour, opinion, or known practice. If it reports the source floor, still draft from the brief. Do not invent statistics, studies, quotes, or sources.",
     input: v.object({}),
     run: () => runResearch(data),
   });
@@ -704,7 +708,7 @@ export function Writer() {
   return [
     "Write a publishable essay from the user brief.",
     "Call research when the brief needs checkable evidence: news, policy, science, figures, other people's words, or architecture or implementation of a named system. Skip research for humour, opinion, or practice the audience already knows.",
-    "If research reports the source floor, stop. Do not plan or draft from that notebook.",
+    "If research reports the source floor, still call draft from the brief. Do not invent statistics, studies, quotes, or sources.",
     "Call draft. Then call save_essay once with the drafted markdown and stop.",
     "Do not write the essay in chat. Do not call critique. save_essay is the editor and the file write.",
     "Sources and quotations are optional unless you use a figure, a quotation, or a sourced claim. Never invent statistics, studies, quotes, or sources.",

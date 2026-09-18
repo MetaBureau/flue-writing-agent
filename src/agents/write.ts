@@ -234,7 +234,7 @@ export function recoverableEssay(text: string): string | undefined {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
   if (
-    /^(Layer 1 blocked save:|Essay is \d+ words|No topic\.|Call research first\.|Saved |Research is below the source floor|Plan bound leftover:|The writer was cancelled)/
+    /^(Layer 1 blocked save:|Essay is \d+ words|No topic\.|Call research first\.|Saved |Research is below the source floor|Plan bound leftover:|The writer was cancelled|Tavily HTTP)/
       .test(trimmed)
   ) {
     return undefined;

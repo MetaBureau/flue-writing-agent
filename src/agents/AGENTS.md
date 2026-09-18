@@ -35,10 +35,11 @@
 - `research` is optional except when `researchRequired` (architecture or
   implementation, or explain a named system). Call it when the brief needs
   checkable evidence. When it runs, it extracts notes and re-queries below
-  the floor. It plans only after `noteFloor`. Below the floor it writes the
-  notes on the job and returns `researchFloorMessage`. Skip it for humour,
-  opinion, or known practice. `draft` writes from the brief alone when
-  research was skipped and not required.
+  the floor, then plans. Below the floor it still plans and `draft` still
+  writes from the brief. `researchFloorMessage` is a warning, not a stop.
+  A Tavily HTTP failure is `job.researchError` and a research-stage warning.
+  Skip research for humour, opinion, or known practice. `draft` writes from
+  the brief alone when research was skipped and not required.
 - Tools share one `RunMeter` on `job.usage`. `formatRun` uses catalog prices.
 - `draft` writes one essay from the job brief, plan, and notes, then one
   expand or shorten pass. `save_essay` calls it when the job has no draft.

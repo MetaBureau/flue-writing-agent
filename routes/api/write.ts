@@ -64,8 +64,10 @@ function emitFromJob(
     send({
       type: "stage",
       id: "research",
-      status: "done",
-      detail: `${job.notes.length} notes`,
+      status: job.researchError ? "warning" : "done",
+      detail: job.researchError
+        ? job.researchError.slice(0, 180)
+        : `${job.notes.length} notes`,
     });
     seen.research = true;
     send({ type: "stage", id: "plan", status: "active" });

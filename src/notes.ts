@@ -23,7 +23,46 @@ export function researchFloorMessage(
 ): string | undefined {
   const floor = noteFloor(words);
   if (noteCount >= floor) return undefined;
-  return `Research is below the source floor (${noteCount}/${floor} notes). Do not plan or draft from this notebook.`;
+  return `Research is below the source floor (${noteCount}/${floor} notes). Draft from the brief. Do not invent statistics, studies, quotes, or sources.`;
+}
+
+function tavilyErrorText(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) return "";
+  try {
+    return pickTavilyError(JSON.parse(trimmed)).replace(/\s+/g, " ").trim()
+      .slice(0, 240);
+  } catch {
+    return trimmed.replace(/\s+/g, " ").trim().slice(0, 240);
+  }
+}
+
+function pickTavilyError(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (!value || typeof value !== "object") return "";
+  const row = value as Record<string, unknown>;
+  for (const key of ["error", "detail", "message"]) {
+    const found = pickTavilyError(row[key]);
+    if (found) return found;
+  }
+  return "";
+}
+
+export function tavilyStatusWhy(status: number): string {
+  if (status === 401) return "the API key was rejected";
+  if (status === 403) return "the API key is forbidden";
+  if (status === 429) return "rate limited";
+  if (status === 432) return "this API key hit its usage limit";
+  return "";
+}
+
+export function tavilyFailure(status: number, body: string): string {
+  const why = tavilyStatusWhy(status);
+  const reason = tavilyErrorText(body);
+  const parts = [`Tavily HTTP ${status}`];
+  if (why) parts.push(why);
+  if (reason) parts.push(reason);
+  return parts.join(": ");
 }
 
 export function extractLimitFor(words: number): number {
@@ -125,6 +164,23 @@ const GENERIC_QUERY_WORDS = new Set([
   "posts",
   "essay",
   "essays",
+  "architecture",
+  "architectural",
+  "architecting",
+  "implementation",
+  "implementing",
+  "explain",
+  "explaining",
+  "purpose",
+  "audience",
+  "constraints",
+  "technical",
+  "builders",
+  "database",
+  "system",
+  "product",
+  "library",
+  "framework",
 ]);
 const STOP_WORDS = new Set(
   "the a an and or of to in on for with from that this these those was were been being have has had not but its their they them you your only into via by as at than then also when while"
@@ -170,6 +226,7 @@ export interface ResearchNotes {
   counterQuery: string;
   hits: SearchHit[];
   articles: Article[];
+  error?: string;
 }
 
 export interface ResearchBudget {
@@ -449,7 +506,9 @@ export function hitsFromPayload(
 export function subjectWords(query: string): string[] {
   const words =
     query.toLowerCase().match(/[a-z0-9]+/g)?.filter((word) =>
-      word.length > 2 && !STOP_WORDS.has(word) && !GENERIC_QUERY_WORDS.has(word)
+      !STOP_WORDS.has(word) &&
+      !GENERIC_QUERY_WORDS.has(word) &&
+      (word.length > 2 || /\d/.test(word))
     ) ?? [];
   return [...new Set(words)];
 }
@@ -458,13 +517,7 @@ export function relevantToQuery(query: string, hit: SearchHit): boolean {
   const distinctive = subjectWords(query);
   if (distinctive.length === 0) return true;
   const raw = `${hit.title} ${hit.content}`.toLowerCase();
-  const matched = distinctive.filter((word) =>
-    new RegExp(`\\b${word}s?\\b`).test(raw)
-  );
-  const need = distinctive.length >= 4
-    ? Math.ceil(distinctive.length / 2)
-    : 1;
-  return matched.length >= need;
+  return distinctive.some((word) => new RegExp(`\\b${word}s?\\b`).test(raw));
 }
 
 export function selectHits(
@@ -632,7 +685,7 @@ async function tavilyPost(
     signal: runFetchSignal(timeoutMs),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(tavilyFailure(response.status, await response.text()));
   }
   return await response.json();
 }
@@ -687,7 +740,11 @@ export async function extractArticles(
   return mergeArticles(extracted, articlesFromHits(missing));
 }
 
-function emptyResearch(query: string, counterQuery = ""): ResearchNotes {
+function emptyResearch(
+  query: string,
+  counterQuery = "",
+  error?: string,
+): ResearchNotes {
   return {
     text: "",
     count: 0,
@@ -695,6 +752,7 @@ function emptyResearch(query: string, counterQuery = ""): ResearchNotes {
     counterQuery,
     hits: [],
     articles: [],
+    error,
   };
 }
 
@@ -749,7 +807,7 @@ export async function gatherResearch(
   } catch (error) {
     const message = error instanceof Error ? error.message : "request failed";
     console.log(`Research: none (${message})`);
-    return emptyResearch(query, counter);
+    return emptyResearch(query, counter, message);
   }
 }
 
@@ -761,9 +819,13 @@ export async function supplementResearch(
   const budget = researchBudget(words);
   const limit = extractLimitFor(words);
   let hits = current.hits;
+  let error = current.error;
   for (const query of queries.map((item) => item.trim()).filter(Boolean).slice(0, 3)) {
-    const extra = await searchHits(query, budget).catch(() => [] as SearchHit[]);
-    hits = mergeHits(hits, extra);
+    try {
+      hits = mergeHits(hits, await searchHits(query, budget));
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : "request failed";
+    }
   }
   hits = selectHits(
     [current.query, current.counterQuery, ...queries].join(" ").trim(),
@@ -780,12 +842,14 @@ export async function supplementResearch(
       return articlesFromHits(fresh);
     })
     : [];
-  return researchFromArticles(
+  const next = researchFromArticles(
     current.query,
     current.counterQuery,
     hits,
-    mergeArticles(current.articles, extracted),
+    mergeArticles(current.articles, extracted.length > 0 ? extracted : articlesFromHits(fresh)),
   );
+  if (error && next.articles.length === 0) next.error = error;
+  return next;
 }
 
 export function mergeNotes(
