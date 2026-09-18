@@ -6,11 +6,16 @@ import {
   stripLeadingTitle,
   wordCountFromTopic,
 } from "./agents/write.ts";
-import { isProviderModel, PROVIDERS, resolveProvider } from "./providers.ts";
-import { writeStages } from "./workflow.ts";
+import { writeWithFlue } from "./agents/run.ts";
+import {
+  isProviderModel,
+  PROVIDERS,
+  resolveCheckModel,
+  resolveProvider,
+} from "./providers.ts";
 
 export { countWords } from "./agents/write.ts";
-export { topicSlug, writeOutputFile } from "./output.ts";
+export { topicSlug, unusedEssayPath, writeOutputFile } from "./output.ts";
 
 interface Args {
   topic: string;
@@ -63,7 +68,7 @@ function parseArgs(): Args {
       "  --model <id>        Model id from the provider's list (e.g. openai/gpt-4.1)",
     );
     console.log(
-      "  --check-model <id>  Optional critic model (default is the writer)",
+      "  --check-model <id>  Optional critic model (default google/gemini-3.5-flash)",
     );
     console.log(
       "  --style <name>      Style: economist, strunk-white, monocle, professional",
@@ -140,10 +145,14 @@ async function runWritingWorkflow(args: Args) {
     (Deno.env.get("FAST_PROVIDER") as keyof typeof PROVIDERS) ||
     "mercury";
 
-  if (args.checkModel && !isProviderModel("haimaker", args.checkModel)) {
+  const writer = resolveProvider(providerName, "reasoning", args.model);
+  const criticId = resolveCheckModel(
+    writer.modelId,
+    args.checkModel ?? Deno.env.get("CHECK_MODEL"),
+  );
+  if (!isProviderModel("haimaker", criticId)) {
     throw new Error("Unknown checker model.");
   }
-  const writer = resolveProvider(providerName, "reasoning", args.model);
 
   if (args.dryRun) {
     console.log("=== Configuration (dry run) ===");
@@ -151,9 +160,7 @@ async function runWritingWorkflow(args: Args) {
     console.log(`Provider: ${providerName}`);
     console.log(`Style: ${args.style}`);
     console.log(`Writer: ${writer.modelId} (${writer.baseUrl})`);
-    console.log(
-      `Critic: ${args.checkModel ?? writer.modelId}`,
-    );
+    console.log(`Critic: ${criticId}`);
     console.log(`Output Format: ${args.outputFormat}`);
     console.log(`Verbose: ${args.verbose}`);
     console.log(
@@ -163,25 +170,17 @@ async function runWritingWorkflow(args: Args) {
   }
 
   log(args, "write", `Running with ${writer.modelId}`);
-  let markdown = "";
-  for await (
-    const event of writeStages({
-      topic: args.topic,
-      style: args.style,
-      provider: providerName,
-      model: args.model,
-      checkModel: args.checkModel,
-      words: wordCountFromTopic(args.topic),
-    })
-  ) {
-    if (event.type === "stage") {
-      const detail = event.detail ? ` ${event.detail}` : "";
-      console.log(`[${event.id}] ${event.status}${detail}`);
-    }
-    if (event.type === "essay") markdown = event.markdown;
-    if (event.type === "error") throw new Error(event.error);
-  }
+  const result = await writeWithFlue({
+    topic: args.topic,
+    style: args.style,
+    provider: providerName,
+    model: args.model,
+    checkModel: criticId,
+    words: wordCountFromTopic(args.topic),
+  });
+  const markdown = result.markdown;
   if (!markdown) throw new Error("The writer returned no essay.");
+  console.log(`[flue] saved ${result.slug}.md`);
   if (args.outputFormat === "markdown") return markdown;
   return formatOutput(args, markdown);
 }

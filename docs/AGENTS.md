@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Design records for the writing workflow. Not runtime.
+Publishing RFCs. Not runtime.
 
 ## Ownership
 
@@ -10,8 +10,8 @@ Design records for the writing workflow. Not runtime.
 
 ## Local Contracts
 
-- Each RFC lists Status, Date, Author, and Scope at the top
-- Status is Draft, Accepted, Implemented, or Rejected. Update it when the decision or code changes
+- Each RFC lists Status, Date, Author, and Scope
+- Status is Draft, Accepted, Implemented, or Rejected
 - Number RFCs in order; do not reuse a number
 
 ## Work Guidance

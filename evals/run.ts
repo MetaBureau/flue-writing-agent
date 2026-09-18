@@ -1,42 +1,38 @@
 /// <reference lib="deno.ns" />
 import { EVAL_BRIEFS } from "./briefs.ts";
 import { formatTable, scoreEssay, type EvalRow } from "./score.ts";
-import { topicSlug } from "../src/output.ts";
-import { writeStages, type WriteJobResult } from "../src/workflow.ts";
+import { writeWithFlue } from "../src/agents/run.ts";
 
 const OUT_DIR = "evals/out";
 
 async function runBrief(
   brief: (typeof EVAL_BRIEFS)[number],
 ): Promise<EvalRow> {
-  const slug = topicSlug(brief.text);
   console.log(`\n=== ${brief.title} (${brief.id}) ===`);
-  const iter = writeStages({
-    topic: brief.text,
-    style: "professional",
-    provider: "haimaker",
-    model: "anthropic/claude-sonnet-5",
-    words: brief.words,
-    outDir: OUT_DIR,
-    keepOnFail: true,
-  });
-  let result: WriteJobResult | undefined;
-  while (true) {
-    const step = await iter.next();
-    if (step.done) {
-      result = step.value;
-      break;
-    }
-    const event = step.value;
-    if (event.type === "stage") {
-      const detail = event.detail ? ` ${event.detail}` : "";
-      console.log(`[${event.id}] ${event.status}${detail}`);
-    }
-    if (event.type === "error") {
-      console.log(`[error] ${event.stage}: ${event.error}`);
-    }
-  }
-  if (!result) {
+  try {
+    const result = await writeWithFlue({
+      topic: brief.text,
+      style: "professional",
+      provider: "haimaker",
+      model: "anthropic/claude-sonnet-5",
+      words: brief.words,
+      outDir: OUT_DIR,
+      keepOnFail: true,
+    });
+    console.log(`saved ${OUT_DIR}/${result.slug}.md`);
+    return scoreEssay({
+      brief: brief.id,
+      essay: result.markdown,
+      notes: result.notes,
+      articles: result.articles,
+      target: result.target,
+      briefText: result.brief.text,
+      rubric: result.review.rubric,
+      cost: result.cost,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "failed";
+    console.log(`[error] ${message}`);
     return scoreEssay({
       brief: brief.id,
       essay: "",
@@ -48,17 +44,6 @@ async function runBrief(
       cost: "failed",
     });
   }
-  console.log(`saved ${OUT_DIR}/${slug}.md`);
-  return scoreEssay({
-    brief: brief.id,
-    essay: result.markdown,
-    notes: result.notes,
-    articles: result.articles,
-    target: result.target,
-    briefText: result.brief.text,
-    rubric: result.review.rubric,
-    cost: result.cost,
-  });
 }
 
 if (import.meta.main) {

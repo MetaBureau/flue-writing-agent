@@ -40,6 +40,16 @@ export function sourcesMarkdown(
   return `## Sources\n\n${lines.join("\n")}`;
 }
 
+export function dropUnknownCitations(
+  essay: string,
+  notes: readonly SourceNote[],
+): string {
+  const known = new Set(notes.map((note) => note.id));
+  return essay.replace(/\[n\d+\]/g, (token) =>
+    known.has(token.slice(1, -1)) ? token : ""
+  );
+}
+
 export function withSources(
   essay: string,
   notes: readonly SourceNote[],
@@ -133,7 +143,6 @@ export function citationProblems(
   notes: readonly SourceNote[],
   brief = "",
 ): string[] {
-  if (notes.length === 0) return [];
   const known = new Set(notes.map((note) => note.id));
   const problems: string[] = [];
   for (const id of citedNoteIds(essay)) {
@@ -141,6 +150,7 @@ export function citationProblems(
       problems.push(`citation [${id}] does not match a note`);
     }
   }
+  if (notes.length === 0) return [...new Set(problems)];
   for (const sentence of sentencesOf(essay)) {
     const quotes = quotedSpans(sentence).filter((span) =>
       normalizeWords(span).length >= 5
@@ -276,15 +286,21 @@ export function quoteProblems(essay: string): string[] {
 export function processProblems(essay: string): string[] {
   const problems: string[] = [];
   for (const sentence of sentencesOf(essay)) {
-    if (
-      /\bthe notes\b/i.test(sentence) ||
-      /\bthe sources\b/i.test(sentence) ||
-      /\bthis essay\b/i.test(sentence)
-    ) {
+    if (isProcessSentence(sentence)) {
       problems.push(`process sentence in the body: ${sentence.slice(0, 80)}`);
     }
   }
   return [...new Set(problems)];
+}
+
+function isProcessSentence(sentence: string): boolean {
+  if (/\bthe notes\b/i.test(sentence) || /\bthe sources\b/i.test(sentence)) {
+    return true;
+  }
+  return (
+    /\bthis essay\s+(?:does not|doesn't|cannot|can't|will not|won't|is unable)\b/i
+      .test(sentence)
+  );
 }
 
 export function groundingProblems(

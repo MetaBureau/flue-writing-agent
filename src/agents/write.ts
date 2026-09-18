@@ -213,6 +213,36 @@ export function essayReadyToSave(
   return markdown;
 }
 
+export function essayForDisk(
+  title: string,
+  body: string,
+  target: number,
+  keepOnFail = false,
+): { markdown: string; error?: string } {
+  try {
+    return { markdown: essayReadyToSave(title, body, target) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Save failed.";
+    return {
+      markdown: essayMarkdown(title, body),
+      error: keepOnFail ? undefined : message,
+    };
+  }
+}
+
+export function recoverableEssay(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+  if (
+    /^(Layer 1 blocked save:|Essay is \d+ words|No topic\.|Call research first\.|Saved |Research is below the source floor|Plan bound leftover:|The writer was cancelled)/
+      .test(trimmed)
+  ) {
+    return undefined;
+  }
+  if (bodyWordCount(trimmed) < 80) return undefined;
+  return trimmed;
+}
+
 export function notesRecord(input: {
   notes: string;
   writerModel: string;
@@ -346,12 +376,18 @@ export function supportSections(
   const strongIds = notes
     .filter((note) => !isEncyclopaediaOrLiveBlog(note.url, note.title))
     .map((note) => note.id);
+  const known = new Set(notes.map((note) => note.id));
   return sections.map((section) => {
-    if (section.noteIds.length === 0) return section;
-    if (section.noteIds.some((id) => strongIds.includes(id))) return section;
-    const extra = strongIds.find((id) => !section.noteIds.includes(id));
-    if (!extra) return section;
-    return { ...section, noteIds: [...section.noteIds, extra] };
+    const noteIds = known.size === 0
+      ? []
+      : section.noteIds.filter((id) => known.has(id));
+    if (noteIds.length === 0) return { ...section, noteIds };
+    if (noteIds.some((id) => strongIds.includes(id))) {
+      return { ...section, noteIds };
+    }
+    const extra = strongIds.find((id) => !noteIds.includes(id));
+    if (!extra) return { ...section, noteIds };
+    return { ...section, noteIds: [...noteIds, extra] };
   });
 }
 
@@ -380,7 +416,7 @@ export function planFromContent(
         heading,
         purpose: typeof section.purpose === "string" ? section.purpose.trim() : "",
         noteIds: stringList(section.noteIds).map((id) =>
-          id.replace(/^\[|\]$/g, "")
+          id.replace(/^\[|\]$/g, "").toLowerCase()
         ),
       });
       if (sections.length >= cap) break;
@@ -487,7 +523,7 @@ export function notesUserPrompt(articles: readonly Article[]): string {
 }
 
 export const PLAN_SYSTEM =
-  "Plan one essay from the attributed notes. The essay argues one claim. If the brief has none, propose one the notes can support. Map each section to note ids. Name counter-arguments the notes support. Name gaps the notes do not cover. Do not invent sources to fill a gap. Do not write a neutral survey. Do not plan a section that lists gaps, discusses the notes, or talks about the research. Gaps stay in gaps. Do not label a section Introduction or Conclusion.";
+  "Plan one essay from the attributed notes. The essay argues one claim. If the brief has none, propose one the notes can support. Map each section to note ids. Name counter-arguments the notes support. Name gaps the notes do not cover. Do not invent sources to fill a gap. Do not write a neutral survey. Do not plan a section that lists gaps, discusses the notes, or talks about the research. Gaps stay in gaps. Do not label a section Introduction or Conclusion. When the brief is architecture or implementation for a technical reader, each section's purpose includes that mechanism's operational bound (overflow, conflict, aging, or failure) as one committed policy, not a menu of options.";
 
 export const PLAN_RESPONSE_FORMAT = {
   type: "json_schema",
@@ -530,13 +566,13 @@ export function planUserPrompt(brief: Brief, target: number): string {
     BRIEF_ASK,
     `Plan a ${target}-word essay in at most ${sectionLimit(target)} sections.`,
     claimLine,
-    "Each section lists the note ids it will use. Plan how to handle opposing notes. Name gaps the notes do not cover. Do not invent a source for a gap. Do not plan a section about gaps or the notes. Do not name a section Introduction or Conclusion.",
+    "Each section lists the note ids it will use. Plan how to handle opposing notes. Name gaps the notes do not cover. Do not invent a source for a gap. Do not plan a section about gaps or the notes. Do not name a section Introduction or Conclusion. When the brief is architecture or implementation for a technical reader, each section's purpose includes that mechanism's operational bound (overflow, conflict, aging, or failure) as one committed policy, not a menu of options.",
     "Return JSON {title, claim, sections: [{heading, purpose, noteIds}], counters, gaps}.",
   ].join("\n\n");
 }
 
 export const DRAFT_SYSTEM =
-  `Write one essay from the plan and the attributed notes. ${NOTES_GROUNDING} Paraphrase. Quoted words must stay under 15% of the body. Quote only a phrase that would lose force if rewritten. Cite a note id in square brackets after every figure, quote, or attributed claim, like [n3]. Name the outlet or author the first time you use a source, then cite without repeating that name every sentence. A copied phrase from a source must be in quotation marks and cited. Do not weave unused notes. Do not paste a URL or a call to action. Do not write about the notes, the sources as a set, the research, or the essay itself. The close answers the claim; do not retreat into what the evidence cannot settle.`;
+  `Write one essay from the brief, and from the plan and attributed notes when those exist. ${NOTES_GROUNDING} Sources and quotations are optional unless you use a figure, a quotation, or a sourced claim. Paraphrase when you do use notes. Quoted words must stay under 15% of the body. Quote only a phrase that would lose force if rewritten. When notes exist, cite a note id in square brackets after every figure, quote, or attributed claim, like [n3]. Name the outlet or author the first time you use a source, then cite without repeating that name every sentence. A copied phrase from a source must be in quotation marks and cited. If there are no notes, do not invent citations, a Sources list, statistics, studies, quotes, or sources. Do not weave unused notes. Do not paste a URL or a call to action. Do not write about the notes, the sources as a set, the research, or the essay itself. State the claim in the opening. The close answers the claim; do not retreat into what the evidence cannot settle. When the brief asks for architecture or implementation, each mechanism needs its operational bound stated as one committed policy, not a menu of options and not a sibling failure mode. A timeout or fail-open policy does not cover overflow of what that mechanism returns. If the plan named a bound, write that bound. State the bound in the mechanism, not in a coda paragraph.`;
 
 export function draftUserPrompt(
   plan: EssayPlan,

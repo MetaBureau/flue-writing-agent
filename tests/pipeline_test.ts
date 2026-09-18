@@ -15,14 +15,17 @@ import {
   dropCallsToAction,
   essayMarkdown,
   essayReadyToSave,
+  essayForDisk,
   expandUserPrompt,
   formatPlan,
   isCallToAction,
   notesRecord,
   notesUserPrompt,
+  PLAN_SYSTEM,
   planFromContent,
   planUserPrompt,
   publishedTitle,
+  recoverableEssay,
   sectionLimit,
   shortenUserPrompt,
   stageSystem,
@@ -32,12 +35,14 @@ import {
   systemMessage,
   wordCountFromTopic,
 } from "../src/agents/write.ts";
+import { flueAlreadyConfigured } from "../src/agents/run.ts";
 import {
   applyBriefDefaults,
   briefFromContent,
   counterQuery,
   parseBrief,
   researchQuery,
+  researchRequired,
   type Brief,
 } from "../src/brief.ts";
 import {
@@ -50,27 +55,42 @@ import {
 import {
   citationProblems,
   copyProblems,
+  dropUnknownCitations,
   groundingProblems,
+  layer1Problems,
   processProblems,
   quoteCopiedPhrases,
   quoteProblems,
   quoteShare,
+  sourcesProblems,
   withSources,
 } from "../src/cite.ts";
 import {
   cacheSystemMessages,
+  combineSignals,
   completionRequestBody,
   estimateUsd,
   responseFormatField,
   RunMeter,
+  runFetchSignal,
   usageFromPayload,
+  withRunSignal,
 } from "../src/complete.ts";
 import {
+  applyPlanBounds,
+  CRITIC_SYSTEM,
   criticFromContent,
+  criticSidecar,
   criticUserPrompt,
   issuesFromHarness,
+  leftoverIssues,
+  leftoverSaveError,
   mergeIssues,
+  PLAN_BOUND_FIX,
+  PLAN_BOUND_PREFIX,
+  planBoundProblems,
   reviseUserPrompt,
+  RUBRIC_IDS,
 } from "../src/critic.ts";
 import {
   DEFAULT_ESSAY_LENGTH,
@@ -83,9 +103,18 @@ import {
   notesPiece,
   pieceRank,
   planPiece,
+  SSE_PADDING,
+  sseComment,
+  sseData,
   WRITE_STAGES,
 } from "../src/contract.ts";
-import { countWords, topicSlug } from "../src/main.ts";
+import {
+  closeEssayKv,
+  flueSqliteFile,
+  onDeploy,
+  putEssayBlob,
+} from "../src/essay_kv.ts";
+import { countWords, topicSlug, unusedEssayPath } from "../src/main.ts";
 import {
   articlesFromExtract,
   articlesFromHits,
@@ -100,6 +129,7 @@ import {
   mergeHits,
   mergeNotes,
   noteFloor,
+  researchFloorMessage,
   outletMatchesDomain,
   relevantToQuery,
   researchBudget,
@@ -109,7 +139,12 @@ import {
   sourceNotesFromUnknown,
   titleKey,
 } from "../src/research.ts";
-import { isProviderModel, WRITER_OPTIONS } from "../src/providers.ts";
+import {
+  DEFAULT_CHECK_MODEL,
+  isProviderModel,
+  resolveCheckModel,
+  WRITER_OPTIONS,
+} from "../src/providers.ts";
 import {
   acceptPromptTurn,
   essayPrompt,
@@ -243,6 +278,76 @@ Deno.test("topicSlug keeps the first six words", () => {
   );
 });
 
+Deno.test("unusedEssayPath does not clobber an existing essay", async () => {
+  const dir = await Deno.makeTempDir();
+  const first = `${dir}/topic.md`;
+  await Deno.writeTextFile(first, "one");
+  const second = await unusedEssayPath(first);
+  assertEquals(second, `${dir}/topic-2.md`);
+  await Deno.writeTextFile(second, "two");
+  const third = await unusedEssayPath(first);
+  assertEquals(third, `${dir}/topic-3.md`);
+  assertEquals(await Deno.readTextFile(first), "one");
+});
+
+Deno.test("unusedEssayPath does not clobber an essay stored only in KV", async () => {
+  const dir = await Deno.makeTempDir();
+  Deno.env.set("ESSAY_KV_PATH", `${dir}/essays.kv`);
+  closeEssayKv();
+  try {
+    const first = `${dir}/topic.md`;
+    await putEssayBlob(first, "one");
+    const second = await unusedEssayPath(first);
+    assertEquals(second, `${dir}/topic-2.md`);
+  } finally {
+    Deno.env.delete("ESSAY_KV_PATH");
+    closeEssayKv();
+  }
+});
+
+Deno.test("onDeploy follows DENO_DEPLOYMENT_ID", () => {
+  const prevId = Deno.env.get("DENO_DEPLOYMENT_ID");
+  const prevFlag = Deno.env.get("DENO_DEPLOY");
+  Deno.env.delete("DENO_DEPLOYMENT_ID");
+  Deno.env.delete("DENO_DEPLOY");
+  try {
+    assertEquals(onDeploy(), false);
+    Deno.env.set("DENO_DEPLOYMENT_ID", "deploy-test");
+    assertEquals(onDeploy(), true);
+    Deno.env.delete("DENO_DEPLOYMENT_ID");
+    Deno.env.set("DENO_DEPLOY", "1");
+    assertEquals(onDeploy(), true);
+  } finally {
+    if (prevId === undefined) Deno.env.delete("DENO_DEPLOYMENT_ID");
+    else Deno.env.set("DENO_DEPLOYMENT_ID", prevId);
+    if (prevFlag === undefined) Deno.env.delete("DENO_DEPLOY");
+    else Deno.env.set("DENO_DEPLOY", prevFlag);
+  }
+});
+
+Deno.test("flueSqliteFile uses /tmp on Deploy", () => {
+  const prevId = Deno.env.get("DENO_DEPLOYMENT_ID");
+  const prevPath = Deno.env.get("FLUE_SQLITE_PATH");
+  const prevFlag = Deno.env.get("DENO_DEPLOY");
+  Deno.env.delete("DENO_DEPLOYMENT_ID");
+  Deno.env.delete("FLUE_SQLITE_PATH");
+  Deno.env.delete("DENO_DEPLOY");
+  try {
+    assertEquals(flueSqliteFile(), "./data/flue.db");
+    Deno.env.set("DENO_DEPLOYMENT_ID", "deploy-test");
+    assertEquals(flueSqliteFile(), "/tmp/flue.db");
+    Deno.env.set("FLUE_SQLITE_PATH", "/var/flue.db");
+    assertEquals(flueSqliteFile(), "/var/flue.db");
+  } finally {
+    if (prevId === undefined) Deno.env.delete("DENO_DEPLOYMENT_ID");
+    else Deno.env.set("DENO_DEPLOYMENT_ID", prevId);
+    if (prevPath === undefined) Deno.env.delete("FLUE_SQLITE_PATH");
+    else Deno.env.set("FLUE_SQLITE_PATH", prevPath);
+    if (prevFlag === undefined) Deno.env.delete("DENO_DEPLOY");
+    else Deno.env.set("DENO_DEPLOY", prevFlag);
+  }
+});
+
 Deno.test("countWords ignores extra spaces", () => {
   assertEquals(countWords("one two  three"), 3);
 });
@@ -329,6 +434,26 @@ Deno.test("stage prompts carry the frog brief and attributed notes", () => {
   for (const prompt of prompts) assertBriefContract(prompt);
   assertStringIncludes(DRAFT_SYSTEM, "[n3]");
   assertStringIncludes(DRAFT_SYSTEM, "15%");
+  assertStringIncludes(DRAFT_SYSTEM, "Sources and quotations are optional");
+  assertStringIncludes(DRAFT_SYSTEM, "operational bound");
+  assertStringIncludes(PLAN_SYSTEM, "operational bound");
+  assertStringIncludes(CRITIC_SYSTEM, "lacking sources or quotations");
+  assertStringIncludes(CRITIC_SYSTEM, "intended reader");
+  assertStringIncludes(CRITIC_SYSTEM, "rewrite that passage in place");
+  assertStringIncludes(CRITIC_SYSTEM, "timeout or fail-open");
+  assertStringIncludes(CRITIC_SYSTEM, "committed policy");
+  assertStringIncludes(DRAFT_SYSTEM, "sibling failure mode");
+  assertStringIncludes(DRAFT_SYSTEM, "coda paragraph");
+  assertStringIncludes(PLAN_SYSTEM, "committed policy");
+  assertStringIncludes(planUserPrompt(FROG_BRIEF, 1200), "operational bound");
+  assertStringIncludes(
+    criticUserPrompt(FROG_BRIEF, "essay", [], formatPlan(plan)),
+    "section purposes govern",
+  );
+  assertStringIncludes(
+    criticUserPrompt(FROG_BRIEF, "essay", [], formatPlan(plan)),
+    "different failure mode",
+  );
   assertStringIncludes(draftUserPrompt(plan, FROG_BRIEF), "[n1]");
   assertStringIncludes(
     draftUserPrompt({ ...plan, wordCountTarget: 500 }, FROG_BRIEF),
@@ -339,6 +464,10 @@ Deno.test("stage prompts carry the frog brief and attributed notes", () => {
   assertEquals(sectionLimit(2000), 5);
   assertStringIncludes(criticUserPrompt(FROG_BRIEF, "essay"), "Silence about process");
   assertStringIncludes(criticUserPrompt(FROG_BRIEF, "essay"), "Claim.");
+  assertStringIncludes(criticUserPrompt(FROG_BRIEF, "essay"), "competent reader");
+  assertStringIncludes(criticUserPrompt(FROG_BRIEF, "essay"), "operational bound");
+  assertStringIncludes(criticUserPrompt(FROG_BRIEF, "essay"), "committed policy");
+  assertStringIncludes(criticUserPrompt(FROG_BRIEF, "essay"), "timeout or fail-open");
   assertFalse(draftUserPrompt(plan, FROG_BRIEF).includes("Weave unused notes"));
   assertFalse(criticUserPrompt(FROG_BRIEF, "essay").includes("actual wit"));
   assertStringIncludes(
@@ -661,6 +790,45 @@ Deno.test("estimate uses catalog prices and does not add reasoning twice", () =>
   const estimate = estimateUsd(meter, prices);
   assertEquals(estimate.complete, true);
   assertEquals(Number(estimate.usd.toFixed(3)), 0.512);
+  const restored = RunMeter.from(meter.snapshot());
+  assertEquals(estimateUsd(restored, prices).usd, estimate.usd);
+});
+
+Deno.test("run abort cancels in-flight fetch signals", () => {
+  const parent = new AbortController();
+  const combined = combineSignals(AbortSignal.timeout(60_000), parent.signal);
+  assertEquals(combined.aborted, false);
+  parent.abort();
+  assertEquals(combined.aborted, true);
+  const run = new AbortController();
+  withRunSignal(run.signal, () => {
+    const signal = runFetchSignal(60_000);
+    assertEquals(signal.aborted, false);
+    run.abort();
+    assertEquals(signal.aborted, true);
+  });
+});
+
+Deno.test("SSE frames pad the first chunk and encode events", () => {
+  assertEquals(SSE_PADDING.startsWith(": "), true);
+  assertEquals(SSE_PADDING.length > 2048, true);
+  assertEquals(
+    sseData({ type: "error", stage: "brief", error: "x" }),
+    'data: {"type":"error","stage":"brief","error":"x"}\n\n',
+  );
+  assertEquals(sseComment("ping"), ": ping\n\n");
+});
+
+Deno.test("Flue start is a no-op when this process already has a runtime", () => {
+  assertEquals(
+    flueAlreadyConfigured(
+      new Error(
+        "[flue] start() found an already-configured Flue runtime in this process.",
+      ),
+    ),
+    true,
+  );
+  assertEquals(flueAlreadyConfigured(new Error("HAIMAKER_API_KEY is not set.")), false);
 });
 
 Deno.test("citation harness rejects a figure or quote without a note id", () => {
@@ -676,6 +844,13 @@ Deno.test("citation harness rejects a figure or quote without a note id", () => 
     citationProblems("They cited [n9] a missing note.", [LOWY]).length > 0,
     true,
   );
+  assertEquals(
+    citationProblems("Frogs need humidity [n2].", []).some((item) =>
+      item.includes("[n2]")
+    ),
+    true,
+  );
+  assertEquals(dropUnknownCitations("Frogs need humidity [n2].", []), "Frogs need humidity .");
   assertEquals(
     citationProblems("The 1999 debate still matters.", [LOWY]),
     [],
@@ -694,6 +869,14 @@ Deno.test("citation harness rejects a figure or quote without a note id", () => 
     ),
     [],
   );
+  const unsourced = "# Local Memory\n\n90 words\n\n" +
+    "Hermes agents forget between sessions. Structured memory on the machine closes that gap without a cloud bill. "
+      .repeat(8);
+  assertEquals(citationProblems(unsourced, []), []);
+  assertEquals(sourcesProblems(unsourced, []), []);
+  const layer1 = layer1Problems(unsourced, [], [], 90);
+  assertEquals(layer1.includes("uncited figure, quote, or attributed claim"), false);
+  assertEquals(layer1.includes("Sources list does not match cited notes"), false);
 });
 
 Deno.test("copy harness requires quotation marks for a long shared phrase", () => {
@@ -763,6 +946,10 @@ Deno.test("critic JSON lists passage-level issues and the brief is the rulebook"
   }));
   assertEquals(review.issues[0]?.passage, "The notes do not settle this.");
   assertEquals(review.rubric.find((item) => item.id === "silence")?.pass, false);
+  const sidecar = criticSidecar(review);
+  assertStringIncludes(sidecar, "Rewrite these passages:");
+  assertStringIncludes(sidecar, "State the claim in the opening.");
+  assertStringIncludes(sidecar, "- claim: fail");
   const prompt = criticUserPrompt(FROG_BRIEF, "essay", [
     "figure 2006 has no citation",
   ]);
@@ -774,6 +961,36 @@ Deno.test("critic JSON lists passage-level issues and the brief is the rulebook"
     issuesFromHarness(["x", "z"]),
   );
   assertEquals(merged.map((issue) => issue.problem), ["x", "z"]);
+  const process = issuesFromHarness([
+    "process sentence in the body: The notes available do not quantify this.",
+  ])[0];
+  assertEquals(process?.passage, "The notes available do not quantify this.");
+  assertStringIncludes(process?.fix ?? "", "does not mention the notes");
+  const missing = issuesFromHarness([
+    "citation [n2] does not match a note",
+  ])[0];
+  assertEquals(missing?.passage, "[n2]");
+  assertStringIncludes(missing?.fix ?? "", "Remove [n2]");
+  const truncated = criticFromContent(
+    `{"items":[{"id":"claim","pass":true,"passage":"","fix":""},{"id":"fidelity","pass":false,"passage":"This qualification","fix":"Respect the source stance."}`,
+  );
+  assertEquals(truncated.rubric.find((item) => item.id === "claim")?.pass, true);
+  assertEquals(truncated.rubric.find((item) => item.id === "fidelity")?.pass, false);
+  const leftover = leftoverIssues(
+    [
+      {
+        passage: "The available reporting concerns a single case.",
+        problem: "silence: Silence about process",
+        fix: "Drop the sentence.",
+      },
+      { passage: "gone sentence", problem: "advance: Advance", fix: "Move." },
+      { passage: "", problem: "quoted words are 20% of the body", fix: "Cut." },
+    ],
+    "The available reporting concerns a single case. Pet frogs stay rare.",
+  );
+  assertEquals(leftover.map((issue) => issue.problem), [
+    "silence: Silence about process",
+  ]);
 });
 
 Deno.test("plan JSON maps sections to note ids and names gaps", () => {
@@ -791,6 +1008,7 @@ Deno.test("plan JSON maps sections to note ids and names gaps", () => {
     }),
     900,
     "elites",
+    [{ ...LOWY, id: "n2" }],
   );
   assertEquals(plan.title, "Who runs Australia");
   assertEquals(plan.claim, "Politics is run by elites.");
@@ -817,6 +1035,24 @@ Deno.test("plan JSON maps sections to note ids and names gaps", () => {
   );
   assertEquals(fat.sections.length, 3);
   assertEquals(fat.sections[0].heading, "One");
+});
+
+Deno.test("plan drops note ids that are not in the notes", () => {
+  const invented = planFromContent(
+    JSON.stringify({
+      title: "Widgets",
+      sections: [{
+        heading: "Memory",
+        purpose: "Show persistence",
+        noteIds: ["N1", "N2"],
+      }],
+      counters: [],
+      gaps: [],
+    }),
+    900,
+    "widgets",
+  );
+  assertEquals(invented.sections[0]?.noteIds, []);
 });
 
 Deno.test("essay markdown has one title and no style line", () => {
@@ -880,6 +1116,35 @@ Deno.test("cleanup is checked before save, and over-length is an error", () => {
   assertStringIncludes(kept, "word");
   const long = "word ".repeat(200).trim() + ".";
   assertThrows(() => assertEssayLength(long, 100));
+  const spilled = essayForDisk("Title", long, 100);
+  assertStringIncludes(spilled.markdown, "word");
+  assertEquals(typeof spilled.error, "string");
+  const allowed = essayForDisk("Title", long, 100, true);
+  assertEquals(allowed.error, undefined);
+  const chatEssay = "Local agents keep nothing between sessions. ".repeat(20);
+  assertEquals(recoverableEssay(chatEssay)?.startsWith("Local agents"), true);
+  assertEquals(
+    recoverableEssay("Essay is 12 words; 900 were requested (minimum 765)."),
+    undefined,
+  );
+  assertEquals(
+    recoverableEssay(
+      "Layer 1 blocked save: body length outside 85–115% of the target",
+    ),
+    undefined,
+  );
+  assertEquals(recoverableEssay("Saved output/topic.md"), undefined);
+  assertEquals(
+    recoverableEssay(
+      "Research is below the source floor (0/8 notes). Do not plan or draft from this notebook.",
+    ),
+    undefined,
+  );
+  assertEquals(
+    recoverableEssay("Plan bound leftover: When a search times out."),
+    undefined,
+  );
+  assertEquals(recoverableEssay("The writer was cancelled."), undefined);
 });
 
 Deno.test("form writer radios are three known models and default to sonnet", () => {
@@ -888,6 +1153,19 @@ Deno.test("form writer radios are three known models and default to sonnet", () 
   for (const option of WRITER_OPTIONS) {
     assertEquals(isProviderModel(option.provider, option.id), true);
   }
+  assertEquals(DEFAULT_CHECK_MODEL, "google/gemini-3.5-flash");
+  assertEquals(
+    resolveCheckModel("anthropic/claude-sonnet-5"),
+    "google/gemini-3.5-flash",
+  );
+  assertEquals(
+    resolveCheckModel("google/gemini-3.5-flash"),
+    "anthropic/claude-sonnet-5",
+  );
+  assertEquals(
+    resolveCheckModel("anthropic/claude-sonnet-5", "openai/gpt-4.1"),
+    "openai/gpt-4.1",
+  );
 });
 
 Deno.test("picker label uses catalog price and does not claim default reasoning", () => {
@@ -944,6 +1222,18 @@ Deno.test("process harness rejects a sentence about the notes or this essay", ()
   );
   assertEquals(
     processProblems(
+      "This essay cannot settle the causal split from the available reporting.",
+    ).length > 0,
+    true,
+  );
+  assertEquals(
+    processProblems(
+      "Yet the claim this essay advances is that donations, revolving-door appointments, and concentrated media ownership structure Australian politics more tightly than the formal equality of votes implies.",
+    ),
+    [],
+  );
+  assertEquals(
+    processProblems(
       "Housing affordability has hit a record low, with buyers squeezed out of the market.",
     ),
     [],
@@ -973,6 +1263,21 @@ Deno.test("research floor and encyclopaedia notes", () => {
   assertEquals(noteFloor(1000), 6);
   assertEquals(noteFloor(2000), 8);
   assertEquals(noteFloor(2500), 10);
+  assertEquals(researchFloorMessage(6, 900), undefined);
+  assertEquals(researchFloorMessage(8, 1500), undefined);
+  assertEquals(researchFloorMessage(0, 1500)?.startsWith("Research is below"), true);
+  assertStringIncludes(researchFloorMessage(2, 900) ?? "", "2/6");
+  assertEquals(researchRequired(FROG_BRIEF), false);
+  assertEquals(
+    researchRequired({
+      ...FROG_BRIEF,
+      text:
+        "Write an essay about a local memory graph. Audience: technical builders. Purpose: explain the architecture and implementation.",
+      purpose: "explain the architecture and implementation of local persistent memory",
+      audience: "technical builders",
+    }),
+    true,
+  );
   assertEquals(
     isEncyclopaediaOrLiveBlog("https://en.wikipedia.org/wiki/Frog", "Frog"),
     true,
@@ -993,4 +1298,60 @@ Deno.test("research floor and encyclopaedia notes", () => {
     [wiki, paper],
   );
   assertEquals(sections[0].noteIds.includes("n2"), true);
+});
+
+Deno.test("a swapped plan bound fails leftover even when the critic would pass", () => {
+  const plan = {
+    title: "Inject must bound overflow",
+    claim: "Inject must refuse overflow of what it returns.",
+    wordCountTarget: 900,
+    sections: [{
+      heading: "Wiring memory",
+      purpose: "State the context-window budget as the inject bound.",
+      noteIds: [] as string[],
+    }],
+    counters: [] as string[],
+    gaps: [] as string[],
+  };
+  const swapped =
+    "When a search times out, the pipeline fails open and the last graph remains live.";
+  const matching =
+    "When inject would overflow the context-window budget, the pipeline refuses the write.";
+  const menu =
+    "The pipeline may overflow, timeout, or fail open, whichever is chosen.";
+  const leftover = planBoundProblems(plan, swapped);
+  assertEquals(leftover.length > 0, true);
+  assertStringIncludes(leftover[0] ?? "", PLAN_BOUND_PREFIX);
+  assertStringIncludes(leftover[0] ?? "", "fails open");
+  assertEquals(planBoundProblems(plan, matching), []);
+  assertEquals(planBoundProblems(plan, menu).length > 0, true);
+  assertEquals(
+    planBoundProblems({ ...plan, sections: [] }, swapped),
+    [],
+  );
+  const boundIssue = issuesFromHarness(leftover)[0];
+  assertEquals(boundIssue?.passage, leftover[0]?.slice(PLAN_BOUND_PREFIX.length));
+  assertEquals(boundIssue?.fix, PLAN_BOUND_FIX);
+  const passed = criticFromContent(JSON.stringify({
+    items: RUBRIC_IDS.map((id) => ({
+      id,
+      pass: true,
+      passage: "",
+      fix: "",
+    })),
+  }));
+  assertEquals(passed.rubric.find((item) => item.id === "advance")?.pass, true);
+  const forced = applyPlanBounds(passed, leftover);
+  assertEquals(forced.rubric.find((item) => item.id === "advance")?.pass, false);
+  assertStringIncludes(forced.issues[0]?.passage ?? "", "fails open");
+  assertEquals(
+    applyPlanBounds(passed, []).rubric.find((item) => item.id === "advance")
+      ?.pass,
+    true,
+  );
+  const sidecar = criticSidecar(forced, leftover);
+  assertStringIncludes(sidecar, "- advance: fail");
+  assertStringIncludes(sidecar, PLAN_BOUND_FIX);
+  assertStringIncludes(leftoverSaveError(leftover) ?? "", "Plan bound leftover:");
+  assertEquals(leftoverSaveError([]), undefined);
 });

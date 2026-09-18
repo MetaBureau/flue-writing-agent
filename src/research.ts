@@ -16,6 +16,7 @@ export {
   mergeHits,
   mergeNotes,
   noteFloor,
+  researchFloorMessage,
   noteWordCount,
   outletMatchesDomain,
   relevantToQuery,

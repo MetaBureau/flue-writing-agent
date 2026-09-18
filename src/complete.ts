@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { type ReasoningEffort, reasoningEffortField } from "./catalog.ts";
 
 export interface CompletionTarget {
@@ -34,6 +35,7 @@ export interface CompleteOptions {
   supportedParams?: readonly string[];
   responseFormat?: Record<string, unknown>;
   meter?: RunMeter;
+  signal?: AbortSignal;
 }
 
 export const EMPTY_USAGE: TokenUsage = {
@@ -43,20 +45,70 @@ export const EMPTY_USAGE: TokenUsage = {
   reasoningTokens: 0,
 };
 
+const runSignal = new AsyncLocalStorage<AbortSignal>();
+
+export function withRunSignal<T>(
+  signal: AbortSignal | undefined,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  if (!signal) return Promise.resolve(fn());
+  return Promise.resolve(runSignal.run(signal, fn));
+}
+
+export function combineSignals(
+  ...signals: Array<AbortSignal | undefined>
+): AbortSignal {
+  const live = signals.filter((item): item is AbortSignal => Boolean(item));
+  if (live.length === 0) return new AbortController().signal;
+  if (live.length === 1) return live[0]!;
+  return AbortSignal.any(live);
+}
+
+export function runFetchSignal(
+  timeoutMs: number,
+  extra?: AbortSignal,
+): AbortSignal {
+  return combineSignals(
+    AbortSignal.timeout(timeoutMs),
+    extra,
+    runSignal.getStore(),
+  );
+}
+
 export class CutOffReply extends Error {
   readonly usage: TokenUsage;
   readonly modelId: string;
+  readonly content: string;
 
-  constructor(label: string, modelId: string, usage: TokenUsage) {
+  constructor(
+    label: string,
+    modelId: string,
+    usage: TokenUsage,
+    content = "",
+  ) {
     super(`${label} was cut off (finish_reason: length)`);
     this.name = "CutOffReply";
     this.usage = usage;
     this.modelId = modelId;
+    this.content = content;
   }
 }
 
 export class RunMeter {
   readonly byModel = new Map<string, TokenUsage>();
+
+  static from(snapshot?: Readonly<Record<string, TokenUsage>>): RunMeter {
+    const meter = new RunMeter();
+    if (!snapshot) return meter;
+    for (const [modelId, usage] of Object.entries(snapshot)) {
+      meter.byModel.set(modelId, { ...EMPTY_USAGE, ...usage });
+    }
+    return meter;
+  }
+
+  snapshot(): Record<string, TokenUsage> {
+    return Object.fromEntries(this.byModel);
+  }
 
   add(modelId: string, usage: TokenUsage): void {
     const current = this.byModel.get(modelId) ?? { ...EMPTY_USAGE };
@@ -282,7 +334,7 @@ export async function streamChat(
     body: JSON.stringify(
       completionRequestBody(model.modelId, messages, options),
     ),
-    signal: AbortSignal.timeout(150_000),
+    signal: runFetchSignal(150_000, options.signal),
   });
 
   const elapsed = () => Math.round(performance.now() - started);
@@ -354,7 +406,7 @@ export async function streamChat(
     reason,
   );
   if (reason === "length") {
-    throw new CutOffReply(options.label, model.modelId, usage);
+    throw new CutOffReply(options.label, model.modelId, usage, content);
   }
   return { content, finishReason: reason || undefined, usage };
 }

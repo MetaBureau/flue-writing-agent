@@ -1,4 +1,5 @@
 import { DEFAULT_ESSAY_LENGTH } from "./contract.ts";
+import { runFetchSignal } from "./complete.ts";
 
 export const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
 export const TAVILY_EXTRACT_URL = "https://api.tavily.com/extract";
@@ -14,6 +15,15 @@ export function noteFloor(words: number): number {
   if (words <= 1000) return 6;
   if (words <= 2000) return 8;
   return 10;
+}
+
+export function researchFloorMessage(
+  noteCount: number,
+  words: number,
+): string | undefined {
+  const floor = noteFloor(words);
+  if (noteCount >= floor) return undefined;
+  return `Research is below the source floor (${noteCount}/${floor} notes). Do not plan or draft from this notebook.`;
 }
 
 export function extractLimitFor(words: number): number {
@@ -619,7 +629,7 @@ async function tavilyPost(
         : { "X-Tavily-Access-Mode": "keyless" }),
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: runFetchSignal(timeoutMs),
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);

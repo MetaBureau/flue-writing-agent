@@ -25,6 +25,7 @@ import {
 import { loadModelHub, pricesFromCatalog } from "./catalog.ts";
 import {
   copyProblems,
+  dropUnknownCitations,
   groundingProblems,
   layer1Problems,
   quoteCopiedPhrases,
@@ -44,6 +45,7 @@ import {
 import {
   criticSidecar,
   issuesFromHarness,
+  leftoverIssues,
   mergeIssues,
   reviewEssay,
   revisePassages,
@@ -320,25 +322,26 @@ export async function* writeStages(
       issues: [],
       rubric: emptyRubric(),
     });
-    let review = emptyReview();
-    const harness = groundingProblems(
+    const runCritic = async (prose: string, found: readonly string[]) => {
+      if (!criticModel.apiKey) return emptyReview();
+      return await reviewEssay({
+        brief,
+        notes,
+        essay: prose,
+        model: criticModel,
+        meter,
+        supportedParams: criticParams,
+        harness: found,
+      });
+    };
+    let leftover = groundingProblems(
       essay,
       notes,
       research.articles,
       brief.text,
     );
-    if (criticModel.apiKey) {
-      review = await reviewEssay({
-        brief,
-        notes,
-        essay,
-        model: criticModel,
-        meter,
-        supportedParams: criticParams,
-        harness,
-      });
-    }
-    const issues = mergeIssues(review.issues, issuesFromHarness(harness));
+    let review = await runCritic(essay, leftover);
+    const issues = mergeIssues(review.issues, issuesFromHarness(leftover));
     const revised = issues.length > 0;
     if (revised) {
       essay = stripLeadingTitle(
@@ -352,32 +355,44 @@ export async function* writeStages(
           supportedParams: writerParams,
         }),
       );
-    }
-    let leftover = groundingProblems(
-      essay,
-      notes,
-      research.articles,
-      brief.text,
-    );
-    if (leftover.length > 0) {
-      essay = stripLeadingTitle(
-        await revisePassages({
-          brief,
-          notes,
-          essay,
-          issues: issuesFromHarness(leftover),
-          model: writer,
-          meter,
-          supportedParams: writerParams,
-        }),
-      );
       leftover = groundingProblems(
         essay,
         notes,
         research.articles,
         brief.text,
       );
+      review = await runCritic(essay, leftover);
+      const roundTwo = mergeIssues(
+        leftoverIssues(issues, essay),
+        mergeIssues(review.issues, issuesFromHarness(leftover)),
+      );
+      if (roundTwo.length > 0) {
+        essay = stripLeadingTitle(
+          await revisePassages({
+            brief,
+            notes,
+            essay,
+            issues: roundTwo,
+            model: writer,
+            meter,
+            supportedParams: writerParams,
+          }),
+        );
+        leftover = groundingProblems(
+          essay,
+          notes,
+          research.articles,
+          brief.text,
+        );
+      }
     }
+    essay = dropUnknownCitations(essay, notes);
+    leftover = groundingProblems(
+      essay,
+      notes,
+      research.articles,
+      brief.text,
+    );
     if (copyProblems(essay, research.articles).length > 0) {
       essay = quoteCopiedPhrases(essay, research.articles);
       leftover = groundingProblems(

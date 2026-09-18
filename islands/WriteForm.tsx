@@ -293,9 +293,14 @@ export default function WriteForm(
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [busy, setBusy] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
   const selected = WRITER_OPTIONS.find((option) => option.id === writer) ??
     DEFAULT_WRITER_OPTION;
   const providerProblem = providerProblems[selected.provider] ?? "";
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   function applyEvent(event: WriteEvent) {
     if (event.type === "stage") {
@@ -326,6 +331,9 @@ export default function WriteForm(
 
   async function onSubmit(event: Event) {
     event.preventDefault();
+    abortRef.current?.abort();
+    const run = new AbortController();
+    abortRef.current = run;
     setBusy(true);
     setError("");
     setWarning("");
@@ -337,6 +345,7 @@ export default function WriteForm(
       const response = await fetch("/api/write", {
         method: "POST",
         headers: { "content-type": "application/json" },
+        signal: run.signal,
         body: JSON.stringify({
           topic,
           words,
@@ -373,9 +382,10 @@ export default function WriteForm(
         }
       }
     } catch (cause) {
+      if (run.signal.aborted) return;
       setError(cause instanceof Error ? cause.message : "The writer failed.");
     } finally {
-      setBusy(false);
+      if (abortRef.current === run) setBusy(false);
     }
   }
 

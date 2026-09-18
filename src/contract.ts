@@ -126,3 +126,13 @@ export type WriteEvent =
   | { type: "piece"; piece: Piece }
   | { type: "essay"; markdown: string; filename: string }
   | { type: "error"; stage: StageId; error: string };
+
+export const SSE_PADDING = `: ${" ".repeat(2048)}\n\n`;
+
+export function sseData(event: WriteEvent): string {
+  return `data: ${JSON.stringify(event)}\n\n`;
+}
+
+export function sseComment(text: string): string {
+  return `: ${text}\n\n`;
+}

@@ -64,6 +64,25 @@ export function applyBriefDefaults(brief: Brief, claim = brief.claim): Brief {
   return { ...brief, claim: nextClaim, purpose };
 }
 
+const ARCHITECTURE = /\barchitect(?:ure|ing|ural)?\b|\bimplementation\b|\bimplementing\b/i;
+const EXPLAIN = /\bexplain(?:ing|s)?\b/i;
+const NAMED_SYSTEM =
+  /\b(system|product|library|framework|api|protocol|runtime|database|agent|model)\b/i;
+
+export function researchRequired(brief: Brief): boolean {
+  const blob = [
+    brief.purpose,
+    brief.text,
+    brief.subject,
+    ...brief.constraints,
+  ].join(" ");
+  if (ARCHITECTURE.test(blob)) return true;
+  if (EXPLAIN.test(brief.purpose || brief.text) && NAMED_SYSTEM.test(blob)) {
+    return true;
+  }
+  return false;
+}
+
 function stringField(row: Record<string, unknown>, key: string): string | undefined {
   return typeof row[key] === "string" ? row[key] : undefined;
 }

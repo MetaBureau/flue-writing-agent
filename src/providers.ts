@@ -80,6 +80,19 @@ export const WRITER_OPTIONS = [
 
 export const DEFAULT_WRITER_OPTION = WRITER_OPTIONS[0];
 
+export const DEFAULT_CHECK_MODEL = "google/gemini-3.5-flash";
+
+export function resolveCheckModel(
+  writerModelId: string,
+  checkModel?: string,
+): string {
+  const requested = checkModel?.trim() || DEFAULT_CHECK_MODEL;
+  if (requested !== writerModelId) return requested;
+  return writerModelId === DEFAULT_CHECK_MODEL
+    ? "anthropic/claude-sonnet-5"
+    : DEFAULT_CHECK_MODEL;
+}
+
 export function modelLabel(modelId: string): string {
   for (const config of Object.values(PROVIDERS)) {
     const found = config.models.find((model) => model.id === modelId);

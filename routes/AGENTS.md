@@ -2,37 +2,43 @@
 
 ## Purpose
 
-Fresh screens for the writing test: prompt interview, topic, length, style, three writer radios, then the saved essay.
+Fresh UI on Deno (dev port 5175, host Deno Deploy). Interview, then write.
 
 ## Ownership
 
-- `_app.tsx` sets the `flue` DaisyUI theme
-- Routes import `define` from `define.ts`, which calls `createDefine` from `jsr:@fresh/core`
-- `index.tsx` mounts the form island
-- `api/write.ts` validates the form and streams `writeStages`
-- `api/prompt.ts` runs the prompt interview on the writer model
+- `_app.tsx` — `flue` DaisyUI theme
+- `index.tsx` — form island
+- `api/write.ts` — validates the form, calls `writeWithFlue`, streams pieces
+- `api/prompt.ts` — prompt interview on the writer model
 
 ## Local Contracts
 
-- Styles are `STYLE_NAMES` from `src/skills/styles.ts`
-- The page does not load the model hub. Writer radios are `WRITER_OPTIONS`. The form posts that option's provider and model, and does not post `checkModel`
-- A model not in the chosen provider's `models` is HTTP 400 JSON `{ error }`
-- Optional `checkModel` must be a HaiMaker picker id. The form does not send one, so the critic uses the writer. Without a writer key the run fails
-- The stream yields `{ type: "error" }` if the essay body is outside 85%–115% of the request. Leftover Layer 1 problems after two revise passes block the save
-- A write streams `text/event-stream`: stage events, `{ type: "piece", piece }`
-  for notes, plan, draft, critic, and the essay, then
-  `{ type: "essay", markdown, filename }`, or `{ type: "error" }`
-- `/api/prompt` takes `provider`, `model`, `seed`, `turns`, and optional `force`. It returns `{ status: "ask", question }` or `{ status: "ready", prompt }`. An empty subject, unknown provider, or unknown model is HTTP 400 JSON `{ error }`. At most five answers. The prompt may use only what the user said
+- Styles are `STYLE_NAMES`. Writer radios are `WRITER_OPTIONS`. Default Claude
+  Sonnet 5. No `checkModel` from the form. `writeWithFlue` still uses Gemini
+  3.5 Flash as the critic unless the API passes `checkModel`
+- Unknown provider/model is HTTP 400 JSON `{ error }`
+- Stream is `text/event-stream`. First bytes are a 2KB comment pad, then Brief
+  active with Writer running, then `: ping` heartbeats each poll tick. Headers
+  disable proxy buffering. `/api/write` reserves `outputPath`, passes it to
+  `writeWithFlue` with the request abort signal, and polls the job sidecar
+  (Deno KV, then `job.json`) to emit
+  notes/plan/draft/critic when those fields exist. Stream `cancel` and
+  `ctx.req.signal` abort the Flue run. A cancelled run is a clean close, not a
+  writer-failed event, and does not recover-save an essay. Skipped research is a
+  warning. Then `{ type: "essay", markdown, filename }` using the saved slug,
+  which may be `<slug>-2` when the first path is taken
+- `/api/prompt` is unchanged: one question at a time, at most five answers
 
 ## Work Guidance
 
-- Use DaisyUI component classes already included in `assets/styles.css`. Add a class to that include list before using a new component.
-- Keep the theme in this app. Do not import the MetaBureau or StewMilne theme.
+- DaisyUI classes already in `assets/styles.css`
+- Keep this app's theme
 
 ## Verification
 
-`deno task dev` serves the page on port 5175.
+`deno task dev` on port 5175. Production is `deno task build` then
+`deno task serve` (`_fresh/server.js`). CI proves that boot with `deno task smoke`.
 
 ## Child DOX Index
 
-- `../islands/AGENTS.md` — client form that posts to `/api/write`
+- `../islands/AGENTS.md` — client form
