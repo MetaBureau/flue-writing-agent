@@ -36,6 +36,7 @@ import {
   wordCountFromTopic,
 } from "../src/agents/write.ts";
 import { flueAlreadyConfigured } from "../src/agents/run.ts";
+import { Writer } from "../src/agents/writer.ts";
 import {
   applyBriefDefaults,
   briefFromContent,
@@ -74,6 +75,7 @@ import {
   RunMeter,
   runFetchSignal,
   usageFromPayload,
+  nestRunSignal,
   withRunSignal,
 } from "../src/complete.ts";
 import {
@@ -94,6 +96,8 @@ import {
 } from "../src/critic.ts";
 import {
   DEFAULT_ESSAY_LENGTH,
+  WRITER_MAX_ATTEMPTS,
+  WRITER_TIMEOUT_MS,
   draftPiece,
   ESSAY_LENGTHS,
   essayLengthCeiling,
@@ -131,6 +135,9 @@ import {
   noteFloor,
   researchFloorMessage,
   tavilyFailure,
+  isTerminalTavilyError,
+  shouldRequeryResearch,
+  tavilyCatch,
   outletMatchesDomain,
   relevantToQuery,
   researchBudget,
@@ -252,6 +259,12 @@ Deno.test("form essay lengths default to 900", () => {
   assertEquals(DEFAULT_ESSAY_LENGTH, 900);
   assertEquals(isEssayLength(900), true);
   assertEquals(isEssayLength(300), false);
+  assertEquals(WRITER_TIMEOUT_MS, 1_800_000);
+  assertEquals(WRITER_MAX_ATTEMPTS, 3);
+  assertEquals(Writer.durability, {
+    maxAttempts: WRITER_MAX_ATTEMPTS,
+    timeoutMs: WRITER_TIMEOUT_MS,
+  });
 });
 
 Deno.test("piece files follow notes, plan, draft, critic, essay", () => {
@@ -653,6 +666,30 @@ Deno.test("Tavily HTTP errors keep the key usage reason", () => {
   );
 });
 
+Deno.test("a Tavily key or rate failure does not re-query toward the floor", () => {
+  const capped = tavilyFailure(
+    432,
+    JSON.stringify({
+      detail: { error: "This request exceeds this API key's set usage limit." },
+    }),
+  );
+  assertEquals(isTerminalTavilyError(capped), true);
+  assertEquals(shouldRequeryResearch(0, 900, capped), false);
+  assertEquals(isTerminalTavilyError(tavilyFailure(429, "")), true);
+  assertEquals(shouldRequeryResearch(0, 900, tavilyFailure(401, "")), false);
+  assertEquals(shouldRequeryResearch(0, 900, undefined), true);
+  assertEquals(shouldRequeryResearch(6, 900, undefined), false);
+  assertEquals(
+    shouldRequeryResearch(0, 900, "Research is below the source floor (0/6 notes)."),
+    true,
+  );
+  const extractCap = tavilyCatch(
+    new Error(tavilyFailure(432, '{"error":"limit"}')),
+  );
+  assertEquals(extractCap.terminal, true);
+  assertEquals(shouldRequeryResearch(4, 900, extractCap.message), false);
+});
+
 Deno.test("facebook posts, content farms, and title mirrors are dropped", () => {
   assertEquals(isBlockedSource("https://www.facebook.com/post/1"), true);
   assertEquals(isBlockedSource("https://frogdetails.com/best-pet-frogs"), true);
@@ -859,6 +896,16 @@ Deno.test("run abort cancels in-flight fetch signals", () => {
     run.abort();
     assertEquals(signal.aborted, true);
   });
+  const request = new AbortController();
+  const tool = new AbortController();
+  withRunSignal(request.signal, () =>
+    nestRunSignal(tool.signal, () => {
+      const signal = runFetchSignal(60_000);
+      assertEquals(signal.aborted, false);
+      request.abort();
+      assertEquals(signal.aborted, true);
+    })
+  );
 });
 
 Deno.test("SSE frames pad the first chunk and encode events", () => {

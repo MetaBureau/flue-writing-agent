@@ -7,6 +7,7 @@ import {
   wordCountFromTopic,
 } from "./agents/write.ts";
 import { writeWithFlue } from "./agents/run.ts";
+import { WRITER_TIMEOUT_MS } from "./contract.ts";
 import {
   isProviderModel,
   PROVIDERS,
@@ -140,6 +141,31 @@ function formatOutput(args: Args, content: string, title = args.topic) {
   }
 }
 
+async function withCliAbort<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const run = new AbortController();
+  const stop = () => {
+    if (!run.signal.aborted) run.abort();
+  };
+  Deno.addSignalListener("SIGINT", stop);
+  let term = false;
+  try {
+    Deno.addSignalListener("SIGTERM", stop);
+    term = true;
+  } catch {
+    // SIGTERM is not available on every OS.
+  }
+  const watchdog = setTimeout(() => stop(), WRITER_TIMEOUT_MS);
+  try {
+    return await fn(run.signal);
+  } finally {
+    clearTimeout(watchdog);
+    Deno.removeSignalListener("SIGINT", stop);
+    if (term) Deno.removeSignalListener("SIGTERM", stop);
+  }
+}
+
 async function runWritingWorkflow(args: Args) {
   const providerName = args.provider ||
     (Deno.env.get("FAST_PROVIDER") as keyof typeof PROVIDERS) ||
@@ -170,14 +196,17 @@ async function runWritingWorkflow(args: Args) {
   }
 
   log(args, "write", `Running with ${writer.modelId}`);
-  const result = await writeWithFlue({
-    topic: args.topic,
-    style: args.style,
-    provider: providerName,
-    model: args.model,
-    checkModel: criticId,
-    words: wordCountFromTopic(args.topic),
-  });
+  const result = await withCliAbort((signal) =>
+    writeWithFlue({
+      topic: args.topic,
+      style: args.style,
+      provider: providerName,
+      model: args.model,
+      checkModel: criticId,
+      words: wordCountFromTopic(args.topic),
+      signal,
+    })
+  );
   const markdown = result.markdown;
   if (!markdown) throw new Error("The writer returned no essay.");
   console.log(`[flue] saved ${result.slug}.md`);

@@ -18,7 +18,12 @@ import {
   layer1Problems,
   withSources,
 } from "../cite.ts";
-import { formatRun, RunMeter, type TokenUsage } from "../complete.ts";
+import {
+  formatRun,
+  nestRunSignal,
+  RunMeter,
+  type TokenUsage,
+} from "../complete.ts";
 import {
   applyPlanBounds,
   criticSidecar,
@@ -31,14 +36,15 @@ import {
   revisePassages,
   type CriticReview,
 } from "../critic.ts";
-import { DEFAULT_ESSAY_LENGTH } from "../contract.ts";
+import { DEFAULT_ESSAY_LENGTH, WRITER_MAX_ATTEMPTS, WRITER_TIMEOUT_MS } from "../contract.ts";
 import {
   formatAttributedNotes,
   gatherResearch,
   mergeNotes,
-  noteFloor,
+  isTerminalTavilyError,
   researchFloorMessage,
   samePublication,
+  shouldRequeryResearch,
   supplementResearch,
   type Article,
   type SourceNote,
@@ -238,7 +244,7 @@ function critiqueReply(job: WriterJob): string {
   if ((job.critiqueCount ?? 0) >= 2) {
     return `${sidecar}${rewritten}\n\nCall save_essay with this essay. The sidecar is the editorial assessment.`;
   }
-  return `${sidecar}${rewritten}\n\nThe rewritten essay already applies the named passage fixes. Call critique again on this text. Do not save yet.`;
+  return `${sidecar}${rewritten}\n\nCall save_essay with this essay. save_essay will critique again if needed.`;
 }
 
 function emptyReview(): CriticReview {
@@ -339,8 +345,8 @@ async function runResearch(data: WriterData): Promise<string> {
     brief,
     meter,
   );
-  const floor = noteFloor(words);
-  if (notes.length < floor) {
+  let gaps: string[] = [];
+  if (shouldRequeryResearch(notes.length, words, research.error)) {
     research = await supplementResearch(
       research,
       [researchQuery(brief), counterQuery(brief)],
@@ -353,26 +359,25 @@ async function runResearch(data: WriterData): Promise<string> {
       notes,
       await extractSourceNotes(extra, writer as ModelConfig, brief, meter),
     );
-  }
-  let gaps: string[] = [];
-  if (notes.length < floor) {
-    const probe = await planEssay(
-      brief,
-      notes,
-      words,
-      writer as ModelConfig,
-      meter,
-    );
-    gaps = probe.gaps;
-    if (gaps.length > 0) {
-      research = await supplementResearch(research, gaps, words);
-      const extra = research.articles.filter((article) =>
-        !notes.some((note) => samePublication(note, article))
-      );
-      notes = mergeNotes(
+    if (shouldRequeryResearch(notes.length, words, research.error)) {
+      const probe = await planEssay(
+        brief,
         notes,
-        await extractSourceNotes(extra, writer as ModelConfig, brief, meter),
+        words,
+        writer as ModelConfig,
+        meter,
       );
+      gaps = probe.gaps;
+      if (gaps.length > 0) {
+        research = await supplementResearch(research, gaps, words);
+        const more = research.articles.filter((article) =>
+          !notes.some((note) => samePublication(note, article))
+        );
+        notes = mergeNotes(
+          notes,
+          await extractSourceNotes(more, writer as ModelConfig, brief, meter),
+        );
+      }
     }
   }
   const blocked = researchFloorMessage(notes.length, words);
@@ -405,20 +410,22 @@ async function runResearch(data: WriterData): Promise<string> {
   };
   await stampCost(job, meter);
   await writeJob(outputPath, job);
-  let plan = await planEssay(
-    brief,
-    notes,
-    words,
-    writer as ModelConfig,
-    meter,
-  );
-  if (!brief.claim && plan.claim) {
-    plan = { ...plan, claim: plan.claim };
+  if (!isTerminalTavilyError(research.error)) {
+    let plan = await planEssay(
+      brief,
+      notes,
+      words,
+      writer as ModelConfig,
+      meter,
+    );
+    if (!brief.claim && plan.claim) {
+      plan = { ...plan, claim: plan.claim };
+    }
+    job.brief = brief.claim ? brief : applyBriefDefaults(brief, plan.claim);
+    job.plan = { ...plan, claim: brief.claim || plan.claim };
+    await stampCost(job, meter);
+    await writeJob(outputPath, job);
   }
-  job.brief = brief.claim ? brief : applyBriefDefaults(brief, plan.claim);
-  job.plan = { ...plan, claim: brief.claim || plan.claim };
-  await stampCost(job, meter);
-  await writeJob(outputPath, job);
   const body = [
     briefSidecar(job.brief),
     formatPlan(job.plan),
@@ -632,17 +639,17 @@ async function runSave(
   const count = job.critiqueCount ?? 0;
   let latest = job;
   if (count === 0 || (!sameDraft && count < 2)) {
-    const message = await runCritique(data, incoming);
+    await runCritique(data, incoming);
     latest = await readWriterJob(outputPath) ?? job;
-    if (openCritiqueIssues(latest).length > 0 && (latest.critiqueCount ?? 0) < 2) {
-      return message;
-    }
   } else if (openCritiqueIssues(job).length > 0 && count < 2) {
-    const message = await runCritique(data, job.draft ?? incoming);
+    await runCritique(data, job.draft ?? incoming);
     latest = await readWriterJob(outputPath) ?? job;
-    if (openCritiqueIssues(latest).length > 0 && (latest.critiqueCount ?? 0) < 2) {
-      return message;
-    }
+  }
+  if (
+    openCritiqueIssues(latest).length > 0 && (latest.critiqueCount ?? 0) < 2
+  ) {
+    await runCritique(data, latest.draft ?? incoming);
+    latest = await readWriterJob(outputPath) ?? latest;
   }
   const result = await persistWriterEssay(
     data,
@@ -671,9 +678,9 @@ export function Writer() {
   useTool({
     name: "research",
     description:
-      "Search and note sources when the brief needs checkable evidence, including architecture or implementation of a named system. Optional for humour, opinion, or known practice. If it reports the source floor, still draft from the brief. Do not invent statistics, studies, quotes, or sources.",
+      "Search and note sources when the brief needs checkable evidence, including architecture or implementation of a named system. Optional for humour, opinion, or known practice. If it reports a Tavily HTTP 401, 403, 429, or 432, do not call research again. If it reports the source floor, still draft from the brief. Do not invent statistics, studies, quotes, or sources.",
     input: v.object({}),
-    run: () => runResearch(data),
+    run: ({ signal }) => nestRunSignal(signal, () => runResearch(data)),
   });
 
   useTool({
@@ -681,7 +688,7 @@ export function Writer() {
     description:
       "Write the essay from the job brief, plan, and notes, then fit length. Call after research, or instead of research when the brief does not need sources.",
     input: v.object({}),
-    run: () => runDraft(data),
+    run: ({ signal }) => nestRunSignal(signal, () => runDraft(data)),
   });
 
   useTool({
@@ -691,7 +698,8 @@ export function Writer() {
     input: v.object({
       markdown: v.pipe(v.string(), v.minLength(1)),
     }),
-    run: ({ data: input }) => runCritique(data, input.markdown),
+    run: ({ data: input, signal }) =>
+      nestRunSignal(signal, () => runCritique(data, input.markdown)),
   });
 
   useTool({
@@ -702,12 +710,14 @@ export function Writer() {
       title: v.pipe(v.string(), v.minLength(1)),
       markdown: v.pipe(v.string(), v.minLength(1)),
     }),
-    run: ({ data: input }) => runSave(data, input.title, input.markdown),
+    run: ({ data: input, signal }) =>
+      nestRunSignal(signal, () => runSave(data, input.title, input.markdown)),
   });
 
   return [
     "Write a publishable essay from the user brief.",
     "Call research when the brief needs checkable evidence: news, policy, science, figures, other people's words, or architecture or implementation of a named system. Skip research for humour, opinion, or practice the audience already knows.",
+    "If research reports a Tavily HTTP 401, 403, 429, or 432, do not call research again. Call draft from the brief. Do not invent statistics, studies, quotes, or sources.",
     "If research reports the source floor, still call draft from the brief. Do not invent statistics, studies, quotes, or sources.",
     "Call draft. Then call save_essay once with the drafted markdown and stop.",
     "Do not write the essay in chat. Do not call critique. save_essay is the editor and the file write.",
@@ -715,3 +725,8 @@ export function Writer() {
     `Target about ${data?.words ?? DEFAULT_ESSAY_LENGTH} words.`,
   ].join(" ");
 }
+
+Writer.durability = {
+  maxAttempts: WRITER_MAX_ATTEMPTS,
+  timeoutMs: WRITER_TIMEOUT_MS,
+};

@@ -13,6 +13,8 @@ export const ESSAY_LENGTHS = [
   5000,
 ] as const;
 export const DEFAULT_ESSAY_LENGTH = 900;
+export const WRITER_TIMEOUT_MS = 1_800_000;
+export const WRITER_MAX_ATTEMPTS = 3;
 export const LENGTH_FLOOR_RATIO = 0.85;
 export const LENGTH_CEILING_RATIO = 1.15;
 export const PROMPT_OPENING = "What should this essay be about?";

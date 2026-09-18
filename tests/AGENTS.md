@@ -23,13 +23,16 @@ Deterministic checks for pipeline helpers and prompt contracts. No live model or
   policies is leftover; `leftoverSaveError` names that leftover; research
   below `noteFloor` returns `researchFloorMessage` and still plans; a
   comparison query keeps a page that names one product;
-  `tavilyFailure` keeps a 432 key usage limit; a
+  `tavilyFailure` keeps a 432 key usage limit; `tavilyCatch` marks that
+  432 terminal even when snippets exist; `shouldRequeryResearch` is
+  false on that 432; a nested tool abort still cancels `runFetchSignal`;
+  a
   floor or plan-bound error string is not a recoverable essay; architecture
   or implementation briefs `researchRequired`, amusement briefs do not;
   `RunMeter.from` restores a snapshot; a run abort cancels `runFetchSignal`;
   `unusedEssayPath` skips a stem that exists only in Deno KV;
   `onDeploy` is true when `DENO_DEPLOYMENT_ID` is set; `flueSqliteFile` is
-  `/tmp/flue.db` on Deploy;
+  `/tmp/flue.db` on Deploy; `Writer.durability` is 3 attempts and 30 minutes;
   SSE padding is at least 2KB; a cancelled-run string is not a recoverable
   essay; a second `start()` in one process is treated as already booted; it does
   not invent a wit rule; the frog brief is verbatim in stage prompts

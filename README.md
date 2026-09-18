@@ -111,7 +111,7 @@ src/
 These are what `Writer` does on a run. They are not a Flue workflow. The workflow is the program that `dispatch`es the agent ([above](#architecture)).
 
 1. **Brief**: Parse audience, purpose, tone, claim, and constraints from the topic. Fall back to the topic text if the parse fails
-2. **Research**: Tavily search on the subject plus the claim, plus a counter-search. Extract the top articles in full. No synthesized answer. If extract fails, use search snippets. If search fails, continue with the topic only. Re-query toward the source floor. Below the floor after re-query, still plan and draft from the brief; do not invent figures or quotes
+2. **Research**: Tavily search on the subject plus the claim, plus a counter-search. Extract the top articles in full. No synthesized answer. If extract fails, use search snippets. If search fails with HTTP 401, 403, 429, or 432, stop searching, keep that error on the job, and draft from the brief. Otherwise re-query toward the source floor. Below the floor after re-query, still plan and draft from the brief; do not invent figures or quotes
 3. **Notes**: One model turn turns each article into structured notes with attribution
 4. **Plan**: Map each section to note ids, at most three sections for a 500-word essay. Name counter-arguments and gaps. Do not label Introduction or Conclusion
 5. **Draft**: The Writer `draft` tool writes one essay from the plan, paraphrasing, citing `[n3]`. Quoted words stay under 15% of the body. If it is short, one expand pass fills thin sections from notes already in the plan. If it is long, one shorten pass cuts filler

@@ -65,6 +65,25 @@ export function tavilyFailure(status: number, body: string): string {
   return parts.join(": ");
 }
 
+export function isTerminalTavilyError(message?: string): boolean {
+  if (!message) return false;
+  return /Tavily HTTP (401|403|429|432)\b/.test(message);
+}
+
+export function tavilyCatch(caught: unknown): { message: string; terminal: boolean } {
+  const message = caught instanceof Error ? caught.message : "request failed";
+  return { message, terminal: isTerminalTavilyError(message) };
+}
+
+export function shouldRequeryResearch(
+  noteCount: number,
+  words: number,
+  error?: string,
+): boolean {
+  if (isTerminalTavilyError(error)) return false;
+  return noteCount < noteFloor(words);
+}
+
 export function extractLimitFor(words: number): number {
   return Math.max(EXTRACT_LIMIT, noteFloor(words));
 }
@@ -761,6 +780,7 @@ function researchFromArticles(
   counterQuery: string,
   hits: SearchHit[],
   articles: Article[],
+  error?: string,
 ): ResearchNotes {
   return {
     text: articles.map((article) =>
@@ -771,6 +791,7 @@ function researchFromArticles(
     counterQuery,
     hits,
     articles,
+    error,
   };
 }
 
@@ -784,26 +805,49 @@ export async function gatherResearch(
   if (!query) return emptyResearch(query, counter);
   try {
     const primary = await searchHits(query, budget);
-    const opposing = counter
-      ? await searchHits(counter, budget).catch(() => [] as SearchHit[])
-      : [];
+    let error: string | undefined;
+    let opposing: SearchHit[] = [];
+    if (counter) {
+      try {
+        opposing = await searchHits(counter, budget);
+      } catch (caught) {
+        const fail = tavilyCatch(caught);
+        error = fail.message;
+        if (fail.terminal) {
+          const hits = selectHits(query, primary, extractLimitFor(words));
+          return researchFromArticles(
+            query,
+            counter,
+            hits,
+            articlesFromHits(hits),
+            error,
+          );
+        }
+      }
+    }
     const limit = extractLimitFor(words);
     const hits = selectHits(
       `${query} ${counter}`.trim(),
       mergeHits(primary, opposing),
       limit,
     );
-    let articles = hits.length > 0
-      ? await extractArticles(hits, limit).catch((error) => {
-        const message = error instanceof Error ? error.message : "request failed";
-        console.log(`Extract: failed (${message}); using search snippets`);
-        return articlesFromHits(hits);
-      })
-      : [];
+    let articles: Article[] = [];
+    if (hits.length > 0) {
+      try {
+        articles = await extractArticles(hits, limit);
+      } catch (caught) {
+        const fail = tavilyCatch(caught);
+        console.log(`Extract: failed (${fail.message}); using search snippets`);
+        articles = articlesFromHits(hits);
+        if (fail.terminal) {
+          return researchFromArticles(query, counter, hits, articles, fail.message);
+        }
+      }
+    }
     if (articles.length === 0 && hits.length > 0) {
       articles = articlesFromHits(hits);
     }
-    return researchFromArticles(query, counter, hits, articles);
+    return researchFromArticles(query, counter, hits, articles, error);
   } catch (error) {
     const message = error instanceof Error ? error.message : "request failed";
     console.log(`Research: none (${message})`);
@@ -824,7 +868,9 @@ export async function supplementResearch(
     try {
       hits = mergeHits(hits, await searchHits(query, budget));
     } catch (caught) {
-      error = caught instanceof Error ? caught.message : "request failed";
+      const fail = tavilyCatch(caught);
+      error = fail.message;
+      if (fail.terminal) break;
     }
   }
   hits = selectHits(
@@ -835,20 +881,43 @@ export async function supplementResearch(
   const fresh = hits.filter((hit) =>
     !alreadyHavePublication(current.articles, hit)
   );
-  const extracted = fresh.length > 0
-    ? await extractArticles(fresh, limit).catch((error) => {
-      const message = error instanceof Error ? error.message : "request failed";
-      console.log(`Extract: failed (${message}); using search snippets`);
-      return articlesFromHits(fresh);
-    })
-    : [];
+  if (isTerminalTavilyError(error)) {
+    return researchFromArticles(
+      current.query,
+      current.counterQuery,
+      hits,
+      mergeArticles(current.articles, articlesFromHits(fresh)),
+      error,
+    );
+  }
+  let extracted: Article[] = [];
+  if (fresh.length > 0) {
+    try {
+      extracted = await extractArticles(fresh, limit);
+    } catch (caught) {
+      const fail = tavilyCatch(caught);
+      console.log(`Extract: failed (${fail.message}); using search snippets`);
+      extracted = articlesFromHits(fresh);
+      if (fail.terminal) {
+        return researchFromArticles(
+          current.query,
+          current.counterQuery,
+          hits,
+          mergeArticles(current.articles, extracted),
+          fail.message,
+        );
+      }
+    }
+  }
   const next = researchFromArticles(
     current.query,
     current.counterQuery,
     hits,
     mergeArticles(current.articles, extracted.length > 0 ? extracted : articlesFromHits(fresh)),
+    error && extracted.length === 0 && current.articles.length === 0
+      ? error
+      : undefined,
   );
-  if (error && next.articles.length === 0) next.error = error;
   return next;
 }
 

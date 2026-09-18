@@ -55,6 +55,15 @@ export function withRunSignal<T>(
   return Promise.resolve(runSignal.run(signal, fn));
 }
 
+export function nestRunSignal<T>(
+  extra: AbortSignal | undefined,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  const parent = runSignal.getStore();
+  const next = extra && parent ? combineSignals(extra, parent) : extra ?? parent;
+  return withRunSignal(next, fn);
+}
+
 export function combineSignals(
   ...signals: Array<AbortSignal | undefined>
 ): AbortSignal {

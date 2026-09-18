@@ -58,7 +58,8 @@ and style catalogs.
 - Completions POST to `${baseUrl}/chat/completions` with SSE; accept JSON if the
   server ignores `stream`. One `RunMeter` lives on the job (`usage`). `formatRun`
   uses `loadPrices()` from the model hub. `streamChat` and Tavily fetch use
-  `runFetchSignal` (call timeout plus the `writeWithFlue` abort). `withRunSignal`
+  `runFetchSignal` (call timeout plus the `writeWithFlue` abort). Writer tools
+  also nest Flue's per-call `signal` via `nestRunSignal`. `withRunSignal`
   scopes that abort across tool HTTP
 - Send `max_completion_tokens`, not `max_tokens`. Request
   `stream_options.include_usage`. Do not send `user` until a tagged call
@@ -91,15 +92,19 @@ and style catalogs.
   canonical URL, title, and same-publisher similar title (HTML and PDF of one
   report count as one). Block mill domains, content farms, and Facebook,
   Twitter, Reddit, Instagram, and TikTok. Extract `extractLimitFor(words)` hits
-  in full (`TAVILY_EXTRACT_URL`). HTTP or network failure continues with the topic
+  in full (`TAVILY_EXTRACT_URL`).   HTTP or network failure continues with the topic
   only and stores Tavily's status and error body on the job (`researchError`).
-  Do not swallow a 432 key usage cap as 0 sources. Extract HTTP failure or empty extract uses search snippets so notes
+  A Tavily HTTP 401, 403, 429, or 432 is terminal for search: do not
+  `supplementResearch` or probe-plan, including when the counter-search or
+  extract is the call that failed. Still `draft` from the brief. Do not
+  swallow a 432 key usage cap as 0 sources. Extract HTTP failure or empty extract uses search snippets so notes
   are not blank after a hit. Research is optional on the Writer except when
   `researchRequired`: architecture or implementation, or an explain-the-system
   brief. When it
   runs, re-query toward `noteFloor`: 6 notes for
   500–1000 words, 8 through 2000, 10 above. Below the floor, `supplementResearch`
-  re-queries the search pair, then a probe plan's gap list. Still below the
+  re-queries the search pair, then a probe plan's gap list, unless Tavily
+  already returned a terminal HTTP error. Still below the
   floor, `research` still plans and `draft` still writes from the brief.
   `researchFloorMessage` is a warning. A hit is relevant if it names any
   distinctive subject word.

@@ -27,7 +27,9 @@
   `<slug>-2.md` and up.
   Pass `outputPath` when the caller already reserved the file. Pass `signal` to
   abort: `agent.abort()`, cancel `read()`, and skip recovery persist unless the
-  `.md` is already on disk. `start()` is a no-op when this process already has
+  `.md` is already on disk. The CLI passes SIGINT, SIGTERM, and a 30-minute
+  watchdog as that signal. `Writer.durability` is 3 attempts and 30 minutes
+  (`WRITER_TIMEOUT_MS`). `start()` is a no-op when this process already has
   a Flue runtime (Vite HMR). The critic defaults to Gemini 3.5 Flash.
   `checkModel` / `CHECK_MODEL` overrides it. It is never the writer model.
 - Writer is a dispatcher: `research` if needed, `draft`, `save_essay`.
@@ -35,12 +37,15 @@
 - `research` is optional except when `researchRequired` (architecture or
   implementation, or explain a named system). Call it when the brief needs
   checkable evidence. When it runs, it extracts notes and re-queries below
-  the floor, then plans. Below the floor it still plans and `draft` still
-  writes from the brief. `researchFloorMessage` is a warning, not a stop.
+  the floor, then plans. A Tavily HTTP 401, 403, 429, or 432 is a tool
+  result the model sees. Do not re-query that key. `draft` still writes from
+  the brief. Below the floor it still plans and `draft` still writes from the
+  brief. `researchFloorMessage` is a warning, not a stop.
   A Tavily HTTP failure is `job.researchError` and a research-stage warning.
   Skip research for humour, opinion, or known practice. `draft` writes from
   the brief alone when research was skipped and not required.
 - Tools share one `RunMeter` on `job.usage`. `formatRun` uses catalog prices.
+  Each tool `run` takes Flue's abort `signal` through `nestRunSignal`.
 - `draft` writes one essay from the job brief, plan, and notes, then one
   expand or shorten pass. `save_essay` calls it when the job has no draft.
   A chat stub under 80 words does not replace that draft.
@@ -57,9 +62,10 @@
   options, or when the essay answers a different bound than the plan named.
   Open issues run `revisePassages` on the writer model, then length fit. The
   tool is for `save_essay`. `save_essay` runs critique first when none has run,
-  or when the markdown changed and there has been only one critique. It persists
-  the rewritten draft, not the pre-critique markdown. Open issues hold the save
-  until a second critique. After two critiques it writes the `.md`. A leftover
+  or when the markdown changed and there has been only one critique. If
+  issues remain after that pass it critiques once more inside the same
+  tool call, then persists. It does not bounce to the model with "call
+  critique again". It persists the rewritten draft, not the pre-critique markdown. A leftover
   plan bound is a save error unless `keepOnFail`, same as length. The critic
   sidecar is the editorial assessment.
 - `save_essay` always writes the `.md` once that gate passes, then reports
