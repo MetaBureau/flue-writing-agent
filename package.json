@@ -1,0 +1,24 @@
+{
+	"name": "flue-writing-agent",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"check:types": "tsc --noEmit",
+		"write": "flue run src/agents/writer.ts"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "^0.83.0",
+		"@flue/runtime": "^2.0.7",
+		"valibot": "^1.2.0"
+	},
+	"devDependencies": {
+		"@flue/cli": "^2.0.7",
+		"@types/node": "^22.10.10",
+		"typescript": "^7.0.2",
+		"vite": "7.3.6"
+	},
+	"overrides": {
+		"vite": "7.3.6",
+		"@tailwindcss/vite": "4.2.1"
+	}
+}

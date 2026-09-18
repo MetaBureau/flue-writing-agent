@@ -1,0 +1,9 @@
+.audit/
+.env
+output/
+evals/out/
+.arena/
+node_modules/
+dist/
+data/
+_fresh/
