@@ -6,18 +6,19 @@ Deterministic checks for pipeline helpers and prompt contracts. No live model or
 
 ## Ownership
 
-`pipeline_test.ts` is the current suite. It imports `src/main.ts`, `src/agents/write.ts`, `src/agents/run.ts`, `src/cite.ts`, `src/critic.ts`, `src/research.ts`, `src/complete.ts`, `src/catalog.ts`, `src/brief.ts`, `src/contract.ts`, `src/prompt.ts`, and `src/essay_kv.ts`.
+`pipeline_test.ts` is the current suite. It imports `src/main.ts`, `src/agents/write.ts`, `src/agents/run.ts`, `src/cite.ts`, `src/critic.ts`, `src/research.ts`, `src/complete.ts`, `src/catalog.ts`, `src/brief.ts`, `src/contract.ts`, `src/prompt.ts`, `src/essay_kv.ts`, and `evals/briefs.ts`.
 
 ## Local Contracts
 
 - Run with `deno task test` (`deno test --unstable-kv --allow-read --allow-write --allow-env tests/`)
 - Assert attributed notes keep outlet, URL, stance, and quotes; draft prompts
-  cite `[n3]` and do not say to weave unused notes; the critic prompt carries
+  cite `[n3]` and do not say to weave unused notes;   the critic prompt carries
   the eight RFC 0003 rubric items, judges as the intended reader, takes an
   objection from a competent reader when notes are empty, and treats a missing
-  operational bound as an advance fail on architecture briefs, fails a sibling
+  failure rule as an advance fail on architecture briefs, fails a sibling
   failure mode or a menu of policies, and receives the plan so a swapped bound
-  fails; the sidecar is the editorial assessment with rewrite notes; a swapped
+  fails; frog plan and draft prompts do not carry architecture guidance;
+  architecture prompts forbid critic jargon in the essay; the sidecar is the editorial assessment with rewrite notes; a swapped
   plan bound is leftover and fails advance even when the critic JSON would
   pass; a matching bound, or a plan that named none, is clean; a menu of
   policies is leftover; `leftoverSaveError` names that leftover; research
@@ -35,7 +36,9 @@ Deterministic checks for pipeline helpers and prompt contracts. No live model or
   `/tmp/flue.db` on Deploy; `Writer.durability` is 3 attempts and 30 minutes;
   SSE padding is at least 2KB; a cancelled-run string is not a recoverable
   essay; a second `start()` in one process is treated as already booted; it does
-  not invent a wit rule; the frog brief is verbatim in stage prompts
+  not invent a wit rule; the frog brief is verbatim in stage prompts; `1500-word`
+  counts as a length request; an empty audience defaults; `No research required`
+  skips `researchRequired` on an architecture brief; the eval set has five briefs
 - Assert the default critic is Gemini 3.5 Flash and is never the writer model
 - Assert the citation harness rejects an uncited figure or quote when notes
   exist, and a missing note id, does not require a cite for a year the notes
@@ -46,7 +49,8 @@ Deterministic checks for pipeline helpers and prompt contracts. No live model or
   harness when that stays under a 15% quote budget; a literature-review quote
   share fails; a sentence that names "the notes", "the sources", or
   "this essay does not / cannot" fails, while "the claim this essay advances"
-  does not; leftover critic issues whose passage is still in the essay stay
+  does not; a heading named Introduction or Conclusion fails, as does critic
+  jargon; leftover critic issues whose passage is still in the essay stay
   for a second revise; unknown `[nX]` fails even when notes are empty and is
   stripped after revise; truncated critic JSON still yields parsed items;
   HTML and PDF of one report on the same publisher

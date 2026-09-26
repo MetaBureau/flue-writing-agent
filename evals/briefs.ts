@@ -39,4 +39,12 @@ export const EVAL_BRIEFS: EvalBrief[] = [
       "A 900-word comic essay for office workers on why meetings multiply.",
     words: 900,
   },
+  {
+    id: "architecture-bounds",
+    title: "Architecture, bounds",
+    file: "evals/briefs/architecture-bounds.txt",
+    text:
+      "Write 1200 words for backend engineers on dual-database architecture for serverless web applications: a centralized relational database versus an edge database. Cover write-through caching, eventual consistency, and cost. Claim: the pattern outperforms either store alone only when writes have one authority, unread edge data expires, and a cost threshold can reject the pattern.",
+    words: 1200,
+  },
 ];

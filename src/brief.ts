@@ -57,25 +57,37 @@ export function fallbackBrief(topic: string): Brief {
 
 export function applyBriefDefaults(brief: Brief, claim = brief.claim): Brief {
   const nextClaim = claim.trim();
+  const next = { ...brief, claim: nextClaim };
+  const audience = brief.audience.trim() ||
+    (architectureBrief(next) ? "a technical reader" : "a general reader");
   const purpose = brief.purpose.trim() ||
-    (nextClaim
-      ? `persuading ${brief.audience.trim() || "the reader"} of the claim`
-      : "");
-  return { ...brief, claim: nextClaim, purpose };
+    (nextClaim ? `persuading ${audience} of the claim` : "");
+  return { ...next, audience, purpose };
 }
 
 const ARCHITECTURE = /\barchitect(?:ure|ing|ural)?\b|\bimplementation\b|\bimplementing\b/i;
 const EXPLAIN = /\bexplain(?:ing|s)?\b/i;
 const NAMED_SYSTEM =
   /\b(system|product|library|framework|api|protocol|runtime|database|agent|model)\b/i;
+const RESEARCH_DECLINED =
+  /\bno research(?:ing|ed)? required\b|\bwithout research\b|\bskip research\b/i;
+
+function briefBlob(brief: Brief): string {
+  return [brief.purpose, brief.text, brief.subject, ...brief.constraints]
+    .join(" ");
+}
+
+export function architectureBrief(brief: Brief): boolean {
+  return ARCHITECTURE.test(briefBlob(brief));
+}
+
+export function researchDeclined(brief: Brief): boolean {
+  return RESEARCH_DECLINED.test([brief.text, ...brief.constraints].join(" "));
+}
 
 export function researchRequired(brief: Brief): boolean {
-  const blob = [
-    brief.purpose,
-    brief.text,
-    brief.subject,
-    ...brief.constraints,
-  ].join(" ");
+  if (researchDeclined(brief)) return false;
+  const blob = briefBlob(brief);
   if (ARCHITECTURE.test(blob)) return true;
   if (EXPLAIN.test(brief.purpose || brief.text) && NAMED_SYSTEM.test(blob)) {
     return true;

@@ -13,7 +13,7 @@ cd /home/stin/workspaces/flue-writing-agent
 deno task start "<BRIEF>" --provider haimaker --model anthropic/claude-sonnet-5 --style professional
 ```
 
-Replace `<BRIEF>` with the user's request as one quoted string. Put audience, purpose, tone, claim, and constraints in that string if they gave them. Put a word count in the brief when they want a length other than 900 (`1200 words`). Styles: `economist`, `strunk-white`, `monocle`, `professional`. Default style is `professional`. Default writer is Claude Sonnet 5 on HaiMaker. The critic is Gemini 3.5 Flash on HaiMaker. Sources and quotations are optional unless the brief needs checkable facts.
+Replace `<BRIEF>` with the user's request as one quoted string. Put audience, purpose, tone, claim, and constraints in that string if they gave them. Put a word count in the brief when they want a length other than 900 (`1200 words` or `1500-word`). Styles: `economist`, `strunk-white`, `monocle`, `professional`. Default style is `professional`. Default writer is Claude Sonnet 5 on HaiMaker. The critic is Gemini 3.5 Flash on HaiMaker. Sources and quotations are optional unless the brief needs checkable facts.
 
 The run needs `.env` in the repo (`HAIMAKER_API_KEY`, optional `TAVILY_API_KEY`). Do not print keys. Do not commit `.env`. Do not invent an essay if the command fails. Wait for the command. Flue aborts the run after 30 minutes. SIGINT also aborts it.
 

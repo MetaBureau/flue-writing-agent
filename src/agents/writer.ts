@@ -678,7 +678,7 @@ export function Writer() {
   useTool({
     name: "research",
     description:
-      "Search and note sources when the brief needs checkable evidence, including architecture or implementation of a named system. Optional for humour, opinion, or known practice. If it reports a Tavily HTTP 401, 403, 429, or 432, do not call research again. If it reports the source floor, still draft from the brief. Do not invent statistics, studies, quotes, or sources.",
+      "Search and note sources when the brief needs checkable evidence, including architecture or implementation of a named system. Optional for humour, opinion, or known practice, and when the brief says no research required. If it reports a Tavily HTTP 401, 403, 429, or 432, do not call research again. If it reports the source floor, still draft from the brief. Do not invent statistics, studies, quotes, or sources.",
     input: v.object({}),
     run: ({ signal }) => nestRunSignal(signal, () => runResearch(data)),
   });
@@ -716,7 +716,7 @@ export function Writer() {
 
   return [
     "Write a publishable essay from the user brief.",
-    "Call research when the brief needs checkable evidence: news, policy, science, figures, other people's words, or architecture or implementation of a named system. Skip research for humour, opinion, or practice the audience already knows.",
+    "Call research when the brief needs checkable evidence: news, policy, science, figures, other people's words, or architecture or implementation of a named system. Skip research for humour, opinion, or practice the audience already knows, and when the brief says no research required.",
     "If research reports a Tavily HTTP 401, 403, 429, or 432, do not call research again. Call draft from the brief. Do not invent statistics, studies, quotes, or sources.",
     "If research reports the source floor, still call draft from the brief. Do not invent statistics, studies, quotes, or sources.",
     "Call draft. Then call save_essay once with the drafted markdown and stop.",

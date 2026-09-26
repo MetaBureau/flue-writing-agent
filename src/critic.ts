@@ -52,7 +52,7 @@ export const RUBRIC_ITEMS: { id: RubricId; text: string }[] = [
   },
   {
     id: "advance",
-    text: "Advance. Every section moves that claim forward. No section is a source summary. When the brief asks for architecture or implementation, a section that names a mechanism without its operational bound (overflow, conflict, aging, or failure) has not moved the claim. The bound must be the failure mode of that mechanism, stated as one committed policy. A timeout or fail-open policy does not satisfy overflow of what the mechanism returns. Naming alternative policies and leaving the choice open does not pass. If the plan named a bound for a section, answering a different failure mode does not pass.",
+    text: "Advance. Every section moves that claim forward. No section is a source summary. When the brief asks for architecture or implementation, a section that names a mechanism without saying what happens on overflow, conflict, aging, or failure has not moved the claim. The rule must be the failure mode of that mechanism, stated as what the system does. A timeout or fail-open policy does not satisfy overflow of what the mechanism returns. Naming alternative policies and leaving the choice open does not pass. If the plan named a rule for a section, answering a different failure mode does not pass.",
   },
   {
     id: "objection",
@@ -67,7 +67,7 @@ export const RUBRIC_ITEMS: { id: RubricId; text: string }[] = [
   {
     id: "voice",
     text:
-      "Voice. The essay explains in its own words. Quotation is used where the wording itself is the evidence.",
+      "Voice. The essay explains in its own words, for the brief's reader. Quotation is used where the wording itself is the evidence. Fail if the diction is the critic's (operational bound, committed policy) or if a section is the plan purpose copied into prose.",
   },
   {
     id: "audience",
@@ -77,7 +77,7 @@ export const RUBRIC_ITEMS: { id: RubricId; text: string }[] = [
   {
     id: "takeaway",
     text:
-      "Takeaway. The close answers the claim. It does not summarise the sections or retreat into \"the evidence does not resolve this\".",
+      "Takeaway. The close answers the claim with new force. It does not summarise the sections, sit under a heading named Introduction or Conclusion, or retreat into \"the evidence does not resolve this\".",
   },
   {
     id: "silence",
@@ -87,7 +87,7 @@ export const RUBRIC_ITEMS: { id: RubricId; text: string }[] = [
 ];
 
 export const CRITIC_SYSTEM =
-  "You judge one essay against the rubric below as the brief's intended reader, not as a checklist that prefers a pass. The brief is the rulebook. Do not invent a requirement the brief did not state. When the brief asks for architecture or implementation, operational bounds (overflow, conflict, aging, or failure) are part of explaining the claim. The bound must match the mechanism: a timeout or fail-open policy does not cover overflow of the payload that mechanism returns. A menu of alternative policies with the choice left open does not pass. If the plan named a bound for a section, fail advance unless the essay states that bound as one committed policy. Do not fail an essay for lacking sources or quotations unless the brief required them or the harness found an uncited figure or quote. If there are no notes, pass fidelity. Do not judge word count as a miss. Return JSON {items: [{id, pass, passage, fix}]} with exactly the eight ids. On fail, passage is one sentence from the essay. Fix is how to rewrite that passage in place so the item passes, not a sentence to append and not a question. On pass, passage and fix are empty.";
+  "You judge one essay against the rubric below as the brief's intended reader, not as a checklist that prefers a pass. The brief is the rulebook. Do not invent a requirement the brief did not state. When the brief asks for architecture or implementation, operational bounds (overflow, conflict, aging, or failure) are part of explaining the claim. The bound must match the mechanism: a timeout or fail-open policy does not cover overflow of the payload that mechanism returns. A menu of alternative policies with the choice left open does not pass. If the plan named a bound for a section, fail advance unless the essay states that bound as what the system does. Fail voice if the essay uses operational bound or committed policy, or sounds like a specification restating the plan. Fail takeaway if the close only recaps the sections or sits under a heading named Introduction or Conclusion. Do not fail an essay for lacking sources or quotations unless the brief required them or the harness found an uncited figure or quote. If there are no notes, pass fidelity. Do not judge word count as a miss. Return JSON {items: [{id, pass, passage, fix}]} with exactly the eight ids. On fail, passage is one sentence from the essay. Fix is how to rewrite that passage in place so the item passes, not a sentence to append and not a question. On pass, passage and fix are empty.";
 
 export const CRITIC_RESPONSE_FORMAT = {
   type: "json_schema",
@@ -130,7 +130,7 @@ export function criticUserPrompt(
     }\nTurn each into a passage-level fix only if it still appears in the essay.`
     : "";
   const planBlock = plan.trim()
-    ? `Plan (section purposes govern architecture bounds):\n${plan.trim()}\nIf a section purpose named an operational bound, the essay must state that bound as one committed policy. Fail advance if the essay answers a different failure mode.`
+    ? `Plan (section purposes govern architecture bounds):\n${plan.trim()}\nIf a section purpose named a failure rule, the essay must state that rule as what the system does. Fail advance if the essay answers a different failure mode. Fail voice if the essay copies the plan's wording or uses operational bound or committed policy.`
     : "";
   const rubric = RUBRIC_ITEMS.map((item) => `${item.id}: ${item.text}`).join(
     "\n",
@@ -212,7 +212,7 @@ export function criticFromContent(content: string): CriticReview {
 export const PLAN_BOUND_PREFIX = "plan bound in: ";
 
 export const PLAN_BOUND_FIX =
-  "Rewrite this passage so it states the bound named in the plan as one committed policy in the mechanism. Do not substitute a sibling failure mode or leave a menu of policies.";
+  "Rewrite this passage so it states the failure rule named in the plan as what the system does. One rule, in the language of the system. Do not substitute a sibling failure mode, leave a menu of policies, or use the phrases operational bound or committed policy.";
 
 const BOUND_KINDS = ["overflow", "conflict", "aging", "failure"] as const;
 type BoundKind = (typeof BOUND_KINDS)[number];
@@ -339,13 +339,18 @@ export function issuesFromHarness(problems: readonly string[]): CriticIssue[] {
     const figure = problem.match(/^figure (.+) has no citation$/)?.[1];
     const quote = problem.match(/^quote has no citation: (.+)$/)?.[1];
     const process = problem.match(/^process sentence in the body: (.+)$/)?.[1];
+    const heading = problem.match(
+      /^heading named Introduction or Conclusion: (.+)$/,
+    )?.[1];
+    const jargon = problem.match(/^critic jargon in the body: (.+)$/)?.[1];
     const missing = problem.match(/^citation (\[n\d+\]) does not match a note$/)
       ?.[1];
     const planBound = problem.startsWith(PLAN_BOUND_PREFIX)
       ? problem.slice(PLAN_BOUND_PREFIX.length)
       : undefined;
     const overQuoted = problem.startsWith("quoted words are");
-    const passage = copied ?? figure ?? quote ?? process ?? missing ??
+    const passage = copied ?? figure ?? quote ?? process ?? heading ?? jargon ??
+      missing ??
       planBound ?? "";
     return {
       passage,
@@ -358,6 +363,10 @@ export function issuesFromHarness(problems: readonly string[]): CriticIssue[] {
         ? `Rewrite this in your own words, or quote a short phrase if it would lose force: ${copied}`
         : process
         ? "Rewrite so the sentence does not mention the notes, the sources, or the essay itself. Keep the argument. Gaps belong in the sidecar."
+        : heading
+        ? "Remove that heading. Continue the close as body prose that answers the claim."
+        : jargon
+        ? "Rewrite in the language of the subject. Do not use operational bound or committed policy."
         : missing
         ? `Remove ${missing}. It does not match a note.`
         : "Cite the matching note or drop the figure.",

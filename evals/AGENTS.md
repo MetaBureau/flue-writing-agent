@@ -6,7 +6,7 @@ Frozen RFC 0003 briefs and the runner that scores them.
 
 ## Ownership
 
-- `briefs/` — four committed briefs; change only by RFC
+- `briefs/` — five committed briefs; change only by RFC
 - `briefs.ts` — ids, word counts, verbatim text
 - `score.ts` — Layer 1 plus the critic rubric table
 - `run.ts` — `deno task eval`; calls `writeWithFlue`; writes `evals/out/` and Deno KV
@@ -26,7 +26,7 @@ Run `deno task eval` after a quality change. Fix only what the table fails.
 
 ## Verification
 
-`deno task eval` prints the table. All four briefs must pass.
+`deno task eval` prints the table. All five briefs must pass.
 
 ## Child DOX Index
 

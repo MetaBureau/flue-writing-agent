@@ -1,4 +1,4 @@
-import type { Brief } from "../brief.ts";
+import { architectureBrief, type Brief } from "../brief.ts";
 import {
   type ChatMessage,
   type CompletionTarget,
@@ -111,7 +111,7 @@ export function countWords(text: string): number {
 }
 
 export function wordCountFromTopic(topic: string): number {
-  const requested = topic.match(/(\d+)\s*words/i);
+  const requested = topic.match(/(\d+)\s*-?\s*words?\b/i);
   return requested ? Number(requested[1]) : DEFAULT_WORD_COUNT;
 }
 
@@ -523,7 +523,13 @@ export function notesUserPrompt(articles: readonly Article[]): string {
 }
 
 export const PLAN_SYSTEM =
-  "Plan one essay from the attributed notes. The essay argues one claim. If the brief has none, propose one the notes can support. Map each section to note ids. Name counter-arguments the notes support. Name gaps the notes do not cover. Do not invent sources to fill a gap. Do not write a neutral survey. Do not plan a section that lists gaps, discusses the notes, or talks about the research. Gaps stay in gaps. Do not label a section Introduction or Conclusion. When the brief is architecture or implementation for a technical reader, each section's purpose includes that mechanism's operational bound (overflow, conflict, aging, or failure) as one committed policy, not a menu of options.";
+  "Plan one essay from the attributed notes. The essay argues one claim. If the brief has none, propose one the notes can support. Map each section to note ids. Name counter-arguments the notes support. Name gaps the notes do not cover. Do not invent sources to fill a gap. Do not write a neutral survey. Do not plan a section that lists gaps, discusses the notes, or talks about the research. Gaps stay in gaps. Do not label a section Introduction or Conclusion.";
+
+export const ARCHITECTURE_PLAN_GUIDANCE =
+  "This brief is architecture or implementation. Each section purpose names what happens on overflow, conflict, aging, or failure as one rule, written as the system behaves. Do not use the phrases operational bound or committed policy in headings or purposes.";
+
+export const ARCHITECTURE_DRAFT_GUIDANCE =
+  "This brief is architecture or implementation. For each mechanism, say what the system does when it overflows, conflicts, ages, or fails. One rule, in the language of that system. If the plan named a failure rule, write that rule. Put it in the section, not a recap. Do not list alternatives and leave the choice open. A timeout or fail-open rule does not cover overflow of what that mechanism returns. Do not write the phrases operational bound or committed policy.";
 
 export const PLAN_RESPONSE_FORMAT = {
   type: "json_schema",
@@ -566,13 +572,14 @@ export function planUserPrompt(brief: Brief, target: number): string {
     BRIEF_ASK,
     `Plan a ${target}-word essay in at most ${sectionLimit(target)} sections.`,
     claimLine,
-    "Each section lists the note ids it will use. Plan how to handle opposing notes. Name gaps the notes do not cover. Do not invent a source for a gap. Do not plan a section about gaps or the notes. Do not name a section Introduction or Conclusion. When the brief is architecture or implementation for a technical reader, each section's purpose includes that mechanism's operational bound (overflow, conflict, aging, or failure) as one committed policy, not a menu of options.",
+    "Each section lists the note ids it will use. Plan how to handle opposing notes. Name gaps the notes do not cover. Do not invent a source for a gap. Do not plan a section about gaps or the notes. Do not name a section Introduction or Conclusion.",
+    architectureBrief(brief) ? ARCHITECTURE_PLAN_GUIDANCE : "",
     "Return JSON {title, claim, sections: [{heading, purpose, noteIds}], counters, gaps}.",
-  ].join("\n\n");
+  ].filter(Boolean).join("\n\n");
 }
 
 export const DRAFT_SYSTEM =
-  `Write one essay from the brief, and from the plan and attributed notes when those exist. ${NOTES_GROUNDING} Sources and quotations are optional unless you use a figure, a quotation, or a sourced claim. Paraphrase when you do use notes. Quoted words must stay under 15% of the body. Quote only a phrase that would lose force if rewritten. When notes exist, cite a note id in square brackets after every figure, quote, or attributed claim, like [n3]. Name the outlet or author the first time you use a source, then cite without repeating that name every sentence. A copied phrase from a source must be in quotation marks and cited. If there are no notes, do not invent citations, a Sources list, statistics, studies, quotes, or sources. Do not weave unused notes. Do not paste a URL or a call to action. Do not write about the notes, the sources as a set, the research, or the essay itself. State the claim in the opening. The close answers the claim; do not retreat into what the evidence cannot settle. When the brief asks for architecture or implementation, each mechanism needs its operational bound stated as one committed policy, not a menu of options and not a sibling failure mode. A timeout or fail-open policy does not cover overflow of what that mechanism returns. If the plan named a bound, write that bound. State the bound in the mechanism, not in a coda paragraph.`;
+  `Write one essay from the brief, and from the plan and attributed notes when those exist. ${NOTES_GROUNDING} Sources and quotations are optional unless you use a figure, a quotation, or a sourced claim. Paraphrase when you do use notes. Quoted words must stay under 15% of the body. Quote only a phrase that would lose force if rewritten. When notes exist, cite a note id in square brackets after every figure, quote, or attributed claim, like [n3]. Name the outlet or author the first time you use a source, then cite without repeating that name every sentence. A copied phrase from a source must be in quotation marks and cited. If there are no notes, do not invent citations, a Sources list, statistics, studies, quotes, or sources. Do not weave unused notes. Do not paste a URL or a call to action. Do not write about the notes, the sources as a set, the research, or the essay itself. State the claim in the opening. The close answers the claim with new force; it does not summarise the sections or retreat into what the evidence cannot settle. Do not label a heading Introduction or Conclusion. Do not write the phrases operational bound or committed policy.`;
 
 export function draftUserPrompt(
   plan: EssayPlan,
@@ -610,6 +617,7 @@ export function draftUserPrompt(
     plan.wordCountTarget <= 700
       ? "Write continuous prose. Do not use markdown headings."
       : "Use at most one markdown heading per planned section. Do not label a heading Introduction or Conclusion.",
+    architectureBrief(brief) ? ARCHITECTURE_DRAFT_GUIDANCE : "",
     "Paraphrase the notes. Keep quoted words under 15% of the body. Cite [n1] style ids after figures, quotes, and attributed claims. Name who said it the first time, not in every sentence. Return only the essay.",
   ].filter(Boolean).join("\n\n");
 }
@@ -624,7 +632,7 @@ export function expandUserPrompt(
     briefBlock(brief),
     BRIEF_ASK,
     `The essay is ${words} words. ${lengthRange(plan.wordCountTarget)}`,
-    "Expand only the thin sections, using notes already in the plan. Do not weave unused notes. Keep citations. Return the full essay.",
+    "Expand only the thin sections, using notes already in the plan. Do not weave unused notes. Keep citations. Do not add a heading named Introduction or Conclusion. Do not write the phrases operational bound or committed policy. Return the full essay.",
     essay.trim(),
   ].join("\n\n");
 }
@@ -784,7 +792,7 @@ export function shortenUserPrompt(
     briefBlock(brief),
     BRIEF_ASK,
     `The essay is ${words} words. ${lengthRange(plan.wordCountTarget)}`,
-    "Cut only filler. Keep citations, quotes, and the close. Do not drop attributed claims. Return the full essay.",
+    "Cut only filler. Keep citations, quotes, and the close. Do not drop attributed claims. Do not add a heading named Introduction or Conclusion. Do not write the phrases operational bound or committed policy. Return the full essay.",
     essay.trim(),
   ].join("\n\n");
 }

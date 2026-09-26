@@ -1,0 +1,1 @@
+Write 1200 words for backend engineers on dual-database architecture for serverless web applications: a centralized relational database versus an edge database. Cover write-through caching, eventual consistency, and cost. Claim: the pattern outperforms either store alone only when writes have one authority, unread edge data expires, and a cost threshold can reject the pattern.

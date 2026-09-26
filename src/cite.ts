@@ -293,6 +293,32 @@ export function processProblems(essay: string): string[] {
   return [...new Set(problems)];
 }
 
+const CRITIC_JARGON =
+  /\boperational bounds?\b|\bcommitted polic(?:y|ies)\b|\bcommitted decision rule\b/i;
+
+export function headingProblems(essay: string): string[] {
+  const body = essay.replace(/\n## Sources\s*\n[\s\S]*$/, "");
+  const problems: string[] = [];
+  for (const match of body.matchAll(
+    /^#{1,6}\s+(introduction|conclusion)\b[^\n]*/gim,
+  )) {
+    problems.push(
+      `heading named Introduction or Conclusion: ${match[0].trim()}`,
+    );
+  }
+  return [...new Set(problems)];
+}
+
+export function criticJargonProblems(essay: string): string[] {
+  const problems: string[] = [];
+  for (const sentence of sentencesOf(essay)) {
+    if (CRITIC_JARGON.test(sentence)) {
+      problems.push(`critic jargon in the body: ${sentence.slice(0, 80)}`);
+    }
+  }
+  return [...new Set(problems)];
+}
+
 function isProcessSentence(sentence: string): boolean {
   if (/\bthe notes\b/i.test(sentence) || /\bthe sources\b/i.test(sentence)) {
     return true;
@@ -314,6 +340,8 @@ export function groundingProblems(
     ...copyProblems(essay, articles),
     ...quoteProblems(essay),
     ...processProblems(essay),
+    ...headingProblems(essay),
+    ...criticJargonProblems(essay),
   ];
 }
 
@@ -366,7 +394,12 @@ export function bodyLinkProblems(essay: string): string[] {
       problems.push(`call to action in the body: ${sentence.slice(0, 80)}`);
     }
   }
-  return [...new Set([...problems, ...processProblems(body)])];
+  return [...new Set([
+    ...problems,
+    ...processProblems(body),
+    ...headingProblems(essay),
+    ...criticJargonProblems(body),
+  ])];
 }
 
 export function layer1Score(
@@ -405,7 +438,7 @@ export function layer1Problems(
     quotes: "quoted words over 15% of the body",
     length: "body length outside 85–115% of the target",
     sources: "Sources list does not match cited notes",
-    body: "URL, markdown link, call to action, or process sentence in the body",
+    body: "URL, markdown link, call to action, process sentence, critic jargon, or Introduction/Conclusion heading in the body",
   };
   return LAYER1_IDS.filter((id) => !score[id]).map((id) => labels[id]);
 }

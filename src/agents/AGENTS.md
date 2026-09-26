@@ -42,7 +42,8 @@
   the brief. Below the floor it still plans and `draft` still writes from the
   brief. `researchFloorMessage` is a warning, not a stop.
   A Tavily HTTP failure is `job.researchError` and a research-stage warning.
-  Skip research for humour, opinion, or known practice. `draft` writes from
+  Skip research for humour, opinion, or known practice, and when the brief
+  says no research required. `draft` writes from
   the brief alone when research was skipped and not required.
 - Tools share one `RunMeter` on `job.usage`. `formatRun` uses catalog prices.
   Each tool `run` takes Flue's abort `signal` through `nestRunSignal`.
@@ -52,15 +53,17 @@
 - Sources and quotations are optional unless the essay uses a figure, a
   quotation, or a sourced claim. Never invent statistics, studies, quotes, or
   sources.
-- `critique` stores the draft on the job, then runs the RFC 0003 rubric plus the
+-   `critique` stores the draft on the job, then runs the RFC 0003 rubric plus the
   cite harness and `planBoundProblems`, with the plan in the critic prompt.
   `applyPlanBounds` fails advance when leftover names a swapped or missing
   plan bound, even if the critic model passed. Objection uses notes when
   present, otherwise a competent reader of the brief. Architecture or
-  implementation briefs fail advance when a mechanism has no operational bound,
+  implementation briefs fail advance when a mechanism has no failure rule,
   when the bound is a sibling failure mode, when the bound is a menu of
   options, or when the essay answers a different bound than the plan named.
-  Open issues run `revisePassages` on the writer model, then length fit. The
+  Plan and draft receive that architecture guidance only on those briefs, and
+  they write the rule in the system's language. Critic jargon in the body and
+  a heading named Introduction or Conclusion are harness fails. Open issues run `revisePassages` on the writer model, then length fit. The
   tool is for `save_essay`. `save_essay` runs critique first when none has run,
   or when the markdown changed and there has been only one critique. If
   issues remain after that pass it critiques once more inside the same

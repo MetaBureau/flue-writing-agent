@@ -10,26 +10,33 @@ critic rubric. The writing run is `src/agents/run.ts`.
 - `workflow.ts` — leftover `writeStages`. Unused by the form, CLI, and eval.
   Do not add stages.
 - `brief.ts` — parse the topic into a `Brief`. The brief is the rulebook.
-  `researchRequired` is true for architecture or implementation, or an
-  explain-the-system brief
+  `architectureBrief` is true for architecture or implementation.
+  `researchRequired` is true for those briefs, or an explain-the-system
+  brief, unless the brief declines research (`No research required`).
+  An empty audience defaults to a general reader, or a technical reader
+  on an architecture brief
 - `cite.ts` — citation, copy, quote-budget, and Layer 1 harness. Rejects an uncited
   figure or quote when notes exist, a citation to a missing note, an unquoted 8-word phrase
   with three distinctive words, quoted words over 15% of the body, a Sources
   list that does not match cited ids, a URL, markdown link, or call to
-  action in the body, and a sentence that names "the notes", "the sources",
-  or "this essay does not / cannot / will not / is unable". "The claim this
-  essay advances" is not a process sentence. A year in the brief, or used as
-  the essay's timeframe,
-  is not a figure
+  action in the body, a sentence that names "the notes", "the sources",
+  or "this essay does not / cannot / will not / is unable", critic jargon
+  (`operational bound`, `committed policy`), and a heading named
+  Introduction or Conclusion. "The claim this essay advances" is not a process
+  sentence. A year in the brief, or used as the essay's timeframe, is not a
+  figure
 - `critic.ts` — one review against the eight RFC 0003 rubric items as the
   brief's intended reader; receives the plan; returns an editorial assessment
   with rewrite notes for named passages, not a sentence to append. Sidecar is
-  that assessment. `planBoundProblems` is leftover when a section purpose named
+  that assessment. Voice fails critic jargon and plan-purpose copying.
+  Takeaway fails a recap close or an Introduction/Conclusion heading.
+  `planBoundProblems` is leftover when a section purpose named
   overflow, conflict, aging, or failure and the essay omits that kind, answers
   a sibling, or leaves a menu of policies. `applyPlanBounds` fails advance on
   that leftover even if the critic model passed. `leftoverSaveError` is the
   save error for that leftover unless `keepOnFail`. Architecture briefs treat
-  operational bounds as part of the claim. Empty notes still require an
+  failure rules as part of the claim, written in the system's language.
+  Empty notes still require an
   objection from a competent reader
 - `output.ts` — topic slug, unused path so a run never overwrites an existing `.md`, atomic `output/` writes, and the Deno KV copy of that essay
 - `essay_kv.ts` — chunked Deno KV blobs for `.md`, `.notes.md`, and `.job.json`. Local file is `data/essays.kv`. Deno Deploy uses the attached KV (`DENO_DEPLOYMENT_ID`). `flueSqliteFile` is `/tmp/flue.db` on Deploy.
@@ -100,7 +107,7 @@ and style catalogs.
   swallow a 432 key usage cap as 0 sources. Extract HTTP failure or empty extract uses search snippets so notes
   are not blank after a hit. Research is optional on the Writer except when
   `researchRequired`: architecture or implementation, or an explain-the-system
-  brief. When it
+  brief, unless the brief declines research. When it
   runs, re-query toward `noteFloor`: 6 notes for
   500–1000 words, 8 through 2000, 10 above. Below the floor, `supplementResearch`
   re-queries the search pair, then a probe plan's gap list, unless Tavily
@@ -119,16 +126,19 @@ and style catalogs.
 - `parseBrief` runs first on the writer model. No key, a cut-off, or invalid
   JSON falls back to the verbatim topic and a `searchQuery` subject. That does
   not fail the run. `brief` is required on `systemMessage`. The interview does
-  not get it. The brief is the rulebook. A missing purpose defaults to
-  persuading the stated audience of the claim. Only the brief may require
+  not get it. The brief is the rulebook.   A missing purpose defaults to
+  persuading the stated audience of the claim. A missing audience defaults to
+  a general reader, or a technical reader on an architecture brief. Only the brief may require
   humour. Do not add a wit rule the brief did not state
 - Plan maps each section to note ids, names counter-arguments, and names gaps.
   If the brief has no claim, the plan proposes one the notes can support and
   records it in the sidecar. At most three sections at 500–700 words, four
   through 1500, five through 2500, six above that. Do not label a section
-  Introduction or Conclusion. When the brief is architecture or implementation
-  for a technical reader, each section's purpose includes that mechanism's
-  operational bound as one committed policy. `draft` writes one essay from the
+  Introduction or Conclusion. Architecture or implementation briefs append
+  failure-rule guidance to plan and draft only; those prompts must not carry
+  critic jargon (`operational bound`, `committed policy`). Each section's
+  purpose names what happens on overflow, conflict, aging, or failure as one
+  rule in the system's language. `draft` writes one essay from the
   brief, and from that plan when research ran. If research was skipped, it
   plans from the brief. Paraphrase when notes exist; quoted words stay under
   15% of the body. Cite `[n3]` after a figure, quote, or attributed claim when
@@ -146,12 +156,12 @@ and style catalogs.
   list. A year in the brief is not a figure. The critic judges the eight
   RFC 0003 rubric items (claim, advance, objection, fidelity, voice, audience,
   takeaway, silence) as the brief's intended reader. On an architecture or
-  implementation brief, a mechanism without an operational bound fails advance,
+  implementation brief, a mechanism without a failure rule fails advance,
   and objection is the strongest counter a competent reader would raise when
   notes are empty. Critique receives the plan. If a section purpose named a
   bound, answering a different failure mode fails advance. A timeout or
   fail-open policy does not cover overflow. A menu of alternative policies
-  with the choice left open does not pass. The critic review and the harness merge; harness findings
+  with the choice left open does not pass. Voice fails critic jargon. The critic review and the harness merge; harness findings
   are not dropped when the critic also returns issues. `planBoundProblems` is
   leftover when the plan named a bound the essay does not state as that kind.
   `applyPlanBounds` fails advance on that leftover. Process sentences map
@@ -172,7 +182,8 @@ and style catalogs.
   does not take that recovery path. Save strips
   body links, URLs, and calls to action. A sentence that names "the notes", "the sources", or
   "this essay" followed by does not / cannot / will not / is unable is a
-  harness fail. `## Sources` is built from cited note ids
+  harness fail, as is critic jargon and a heading named Introduction or
+  Conclusion. `## Sources` is built from cited note ids
 - Style names still exist. They go into the draft prompt. There is no style
   rewrite pass
 - Dry run prints config and does not call models or Tavily beyond the
@@ -186,7 +197,7 @@ and style catalogs.
   (`:memory:` in tests). Unset on Deploy. `onDeploy` is true when
   `DENO_DEPLOYMENT_ID` is set.
 - Form `words` is an `ESSAY_LENGTHS` count and wins over a count in the topic.
-  The CLI still uses `wordCountFromTopic`. `bodyWordCount` excludes the title,
+  The CLI still uses `wordCountFromTopic` (`200 words` or `1500-word`). `bodyWordCount` excludes the title,
   the `{n} words` line, and the Sources list
 - The form interview uses the writer model. It asks one question at a time,
   including when the topic is empty, stops after five answers, and does not

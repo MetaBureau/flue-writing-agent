@@ -10,6 +10,8 @@ import {
   bodyWordCount,
   cachedPrefix,
   cleanEssayBody,
+  ARCHITECTURE_DRAFT_GUIDANCE,
+  ARCHITECTURE_PLAN_GUIDANCE,
   DRAFT_SYSTEM,
   draftUserPrompt,
   dropCallsToAction,
@@ -37,11 +39,14 @@ import {
 } from "../src/agents/write.ts";
 import { flueAlreadyConfigured } from "../src/agents/run.ts";
 import { Writer } from "../src/agents/writer.ts";
+import { EVAL_BRIEFS } from "../evals/briefs.ts";
 import {
   applyBriefDefaults,
+  architectureBrief,
   briefFromContent,
   counterQuery,
   parseBrief,
+  researchDeclined,
   researchQuery,
   researchRequired,
   type Brief,
@@ -57,7 +62,9 @@ import {
   citationProblems,
   copyProblems,
   dropUnknownCitations,
+  criticJargonProblems,
   groundingProblems,
+  headingProblems,
   layer1Problems,
   processProblems,
   quoteCopiedPhrases,
@@ -173,6 +180,18 @@ const FROG_BRIEF: Brief = {
   audience: "intellectuals",
   purpose: "providing amusement",
   tone: "",
+  constraints: [],
+};
+
+const ARCH_BRIEF: Brief = {
+  text:
+    "Write 1200 words for backend engineers on dual-database architecture for serverless web applications.",
+  subject: "dual-database architecture for serverless web applications",
+  claim:
+    "the pattern outperforms either store alone only when writes have one authority",
+  audience: "backend engineers",
+  purpose: "persuade engineers of the claim",
+  tone: "Professional",
   constraints: [],
 };
 
@@ -370,6 +389,7 @@ Deno.test("countWords ignores extra spaces", () => {
 Deno.test("word count defaults to 900 unless the topic names a count", () => {
   assertEquals(wordCountFromTopic("The Flue agent is a Deno CLI."), 900);
   assertEquals(wordCountFromTopic("Write 200 words about Flue."), 200);
+  assertEquals(wordCountFromTopic("Write a 1500-word essay about dual databases."), 1500);
 });
 
 Deno.test("essay length floor is 85 percent of the request", () => {
@@ -450,17 +470,19 @@ Deno.test("stage prompts carry the frog brief and attributed notes", () => {
   assertStringIncludes(DRAFT_SYSTEM, "[n3]");
   assertStringIncludes(DRAFT_SYSTEM, "15%");
   assertStringIncludes(DRAFT_SYSTEM, "Sources and quotations are optional");
-  assertStringIncludes(DRAFT_SYSTEM, "operational bound");
-  assertStringIncludes(PLAN_SYSTEM, "operational bound");
+  assertStringIncludes(DRAFT_SYSTEM, "Do not write the phrases operational bound");
+  assertFalse(PLAN_SYSTEM.includes("operational bound"));
+  assertFalse(PLAN_SYSTEM.includes("committed policy"));
+  assertFalse(draftUserPrompt(plan, FROG_BRIEF).includes("overflow, conflict, aging"));
+  assertFalse(planUserPrompt(FROG_BRIEF, 1200).includes("This brief is architecture"));
+  assertStringIncludes(planUserPrompt(ARCH_BRIEF, 1200), ARCHITECTURE_PLAN_GUIDANCE);
+  assertStringIncludes(draftUserPrompt(plan, ARCH_BRIEF), ARCHITECTURE_DRAFT_GUIDANCE);
   assertStringIncludes(CRITIC_SYSTEM, "lacking sources or quotations");
   assertStringIncludes(CRITIC_SYSTEM, "intended reader");
   assertStringIncludes(CRITIC_SYSTEM, "rewrite that passage in place");
   assertStringIncludes(CRITIC_SYSTEM, "timeout or fail-open");
   assertStringIncludes(CRITIC_SYSTEM, "committed policy");
-  assertStringIncludes(DRAFT_SYSTEM, "sibling failure mode");
-  assertStringIncludes(DRAFT_SYSTEM, "coda paragraph");
-  assertStringIncludes(PLAN_SYSTEM, "committed policy");
-  assertStringIncludes(planUserPrompt(FROG_BRIEF, 1200), "operational bound");
+  assertStringIncludes(CRITIC_SYSTEM, "specification restating the plan");
   assertStringIncludes(
     criticUserPrompt(FROG_BRIEF, "essay", [], formatPlan(plan)),
     "section purposes govern",
@@ -1345,6 +1367,29 @@ Deno.test("process harness rejects a sentence about the notes or this essay", ()
   );
 });
 
+Deno.test("harness rejects critic jargon and Introduction or Conclusion headings", () => {
+  const recap = "# Dual databases\n\n40 words\n\nThe claim stands.\n\n## Conclusion\n\nThe claim stands on these commitments together.";
+  assertEquals(headingProblems(recap).length > 0, true);
+  assertEquals(
+    criticJargonProblems(
+      "The committed policy is a timeout. An operational bound follows.",
+    ).length > 0,
+    true,
+  );
+  const clean =
+    "Any edge write not acknowledged within thirty seconds is discarded and retried. Stale edge records expire and force a fetch from the centre.";
+  assertEquals(criticJargonProblems(clean), []);
+  assertEquals(headingProblems(clean), []);
+  const layer1 = layer1Problems(recap, [], [], 40);
+  assertEquals(
+    layer1.includes(
+      "URL, markdown link, call to action, process sentence, critic jargon, or Introduction/Conclusion heading in the body",
+    ),
+    true,
+  );
+  assertEquals(groundingProblems(recap, []).some((item) => item.startsWith("heading named")), true);
+});
+
 Deno.test("a brief without a purpose defaults to persuading the audience of the claim", () => {
   const brief = applyBriefDefaults({
     text: "Housing in 2026.",
@@ -1357,6 +1402,30 @@ Deno.test("a brief without a purpose defaults to persuading the audience of the 
   });
   assertStringIncludes(brief.purpose, "persuading");
   assertStringIncludes(brief.purpose, "a general reader");
+  assertEquals(
+    applyBriefDefaults({
+      text: "Housing in 2026.",
+      subject: "housing",
+      claim: "rents outpace wages",
+      audience: "",
+      purpose: "",
+      tone: "",
+      constraints: [],
+    }).audience,
+    "a general reader",
+  );
+  assertEquals(
+    applyBriefDefaults({
+      text: "Write about dual-database architecture.",
+      subject: "dual-database architecture",
+      claim: "split authority from availability",
+      audience: "",
+      purpose: "",
+      tone: "",
+      constraints: [],
+    }).audience,
+    "a technical reader",
+  );
   assertStringIncludes(
     planUserPrompt({ ...brief, claim: "" }, 1200),
     "The brief states no claim",
@@ -1373,6 +1442,30 @@ Deno.test("research floor and encyclopaedia notes", () => {
   assertEquals(researchFloorMessage(0, 1500)?.startsWith("Research is below"), true);
   assertStringIncludes(researchFloorMessage(2, 900) ?? "", "2/6");
   assertEquals(researchRequired(FROG_BRIEF), false);
+  assertEquals(architectureBrief(FROG_BRIEF), false);
+  assertEquals(architectureBrief(ARCH_BRIEF), true);
+  assertEquals(researchRequired(ARCH_BRIEF), true);
+  assertEquals(
+    researchDeclined({
+      ...ARCH_BRIEF,
+      constraints: ["No research required"],
+    }),
+    true,
+  );
+  assertEquals(
+    researchRequired({
+      ...ARCH_BRIEF,
+      constraints: ["No research required"],
+    }),
+    false,
+  );
+  assertEquals(
+    architectureBrief({
+      ...ARCH_BRIEF,
+      constraints: ["No research required"],
+    }),
+    true,
+  );
   assertEquals(
     researchRequired({
       ...FROG_BRIEF,
@@ -1459,4 +1552,19 @@ Deno.test("a swapped plan bound fails leftover even when the critic would pass",
   assertStringIncludes(sidecar, PLAN_BOUND_FIX);
   assertStringIncludes(leftoverSaveError(leftover) ?? "", "Plan bound leftover:");
   assertEquals(leftoverSaveError([]), undefined);
+});
+
+Deno.test("RFC 0003 eval set is five frozen briefs including architecture", () => {
+  assertEquals(EVAL_BRIEFS.length, 5);
+  assertEquals(EVAL_BRIEFS.map((brief) => brief.id), [
+    "contested-long",
+    "simple-short",
+    "no-claim",
+    "tone-required",
+    "architecture-bounds",
+  ]);
+  const architecture = EVAL_BRIEFS[4];
+  assertEquals(architecture?.words, 1200);
+  assertStringIncludes(architecture?.text ?? "", "architecture");
+  assertFalse(architecture?.text.includes("No research required"));
 });
